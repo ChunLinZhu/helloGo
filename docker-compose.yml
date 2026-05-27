@@ -1,0 +1,126 @@
+# ============================================================
+# helloGo docker-compose — 完整环境（应用 + 基础设施）
+# ============================================================
+# 用法:
+#   make docker-up     — 构建并启动全部服务
+#   make docker-down   — 停止全部服务
+#   docker-compose up --build -d
+# ============================================================
+
+version: '2.4'
+
+services:
+  # ── 应用服务 ──────────────────────────────────────────────
+  app:
+    build: .
+    container_name: hellogo-app
+    restart: unless-stopped
+    ports:
+      - '${PORT:-8000}:8000'
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    environment:
+      - APP_ENV=production
+      - PORT=${PORT:-8000}
+      - DB_TYPE=${DB_TYPE:-mysql}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER:-hellogo}
+      - DB_PASS=${DB_PASS:-hellogo_password}
+      - DB_NAME=${DB_NAME:-hellogo}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASS=${REDIS_PASS:-redis_password}
+      - JWT_SECRET=${JWT_SECRET:-change_me_please}
+      - JWT_EXPIRES=${JWT_EXPIRES:-1d}
+      - JWT_REFRESH_EXPIRES=${JWT_REFRESH_EXPIRES:-7d}
+      - CSRF_ENABLED=${CSRF_ENABLED:-true}
+      - CSRF_MODE=${CSRF_MODE:-header}
+      - CSRF_SECRET=${CSRF_SECRET:-change-me}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
+      - SWAGGER_ENABLE=${SWAGGER_ENABLE:-false}
+      - THROTTLE_TTL=${THROTTLE_TTL:-60}
+      - THROTTLE_LIMIT=${THROTTLE_LIMIT:-100}
+    volumes:
+      - app-data:/app/data
+      - app-upload:/app/upload
+      - app-logs:/app/logs
+    networks:
+      - hellogo-net
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: hellogo-redis
+    restart: unless-stopped
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    command: redis-server --requirepass ${REDIS_PASS:-redis_password} --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASS:-redis_password}', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hellogo-net
+
+  # ── MySQL 8 ──────────────────────────────────────────────
+  mysql:
+    image: mysql:8
+    container_name: hellogo-mysql
+    restart: unless-stopped
+    ports:
+      - '${MYSQL_PORT:-3306}:3306'
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASS:-hellogo_password}
+      - MYSQL_DATABASE=${DB_NAME:-hellogo}
+      - MYSQL_USER=${DB_USER:-hellogo}
+      - MYSQL_PASSWORD=${DB_PASS:-hellogo_password}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - hellogo-net
+
+  # ── PostgreSQL 15（可选，不需要时注释掉或 docker-compose stop postgres） ─
+  postgres:
+    image: postgres:15-alpine
+    container_name: hellogo-postgres
+    restart: unless-stopped
+    ports:
+      - '${PG_PORT:-5432}:5432'
+    environment:
+      - POSTGRES_USER=${PG_USER:-hellogo}
+      - POSTGRES_PASSWORD=${PG_PASS:-hellogo_password}
+      - POSTGRES_DB=${PG_DB:-hellogo}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${PG_USER:-hellogo}']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hellogo-net
+
+volumes:
+  app-data:
+  app-upload:
+  app-logs:
+  redis-data:
+  mysql-data:
+  postgres-data:
+
+networks:
+  hellogo-net:
+    driver: bridge
