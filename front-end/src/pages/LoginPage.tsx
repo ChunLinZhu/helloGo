@@ -1,12 +1,22 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../lib/axios'
 import { useAppStore } from '../stores/app'
 
 export default function LoginPage() {
-  const { setToken, setSessionId, setRefreshToken } = useAppStore()
+  const { setToken, setSessionId, setRefreshToken, setCsrfToken, csrfToken } = useAppStore()
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('admin123')
   const [resp, setResp] = useState<unknown>(null)
+
+  // 获取 CSRF token
+  useEffect(() => {
+    api.get('/api/csrf-token')
+      .then((r) => {
+        const token = r.data?.csrfToken || ''
+        if (token) setCsrfToken(token)
+      })
+      .catch(() => {})
+  }, [setCsrfToken])
 
   const handleLogin = async () => {
     try {
@@ -30,6 +40,9 @@ export default function LoginPage() {
       </p>
 
       <div className="p-4 bg-white border rounded space-y-3">
+        <div className="text-xs text-gray-400">
+          CSRF Token: {csrfToken ? csrfToken.slice(0, 20) + '...' : '未获取'}
+        </div>
         <div className="flex gap-2">
           <input
             className="border px-2 py-1"

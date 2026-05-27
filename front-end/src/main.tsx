@@ -14,6 +14,7 @@ import SystemPage from './pages/SystemPage'
 import LogsPage from './pages/LogsPage'
 import MetricsPage from './pages/MetricsPage'
 import HealthPage from './pages/HealthPage'
+import CsrfPage from './pages/CsrfPage'
 import { useAppStore } from './stores/app'
 import { api } from './lib/axios'
 
@@ -55,6 +56,7 @@ function App() {
           <Link to="/logs" className="hover:underline">日志</Link>
           <Link to="/metrics" className="hover:underline">指标</Link>
           <Link to="/health" className="hover:underline">健康</Link>
+          <Link to="/csrf" className="hover:underline">CSRF</Link>
           <LogoutButton />
         </nav>
         <main className="p-4 max-w-6xl mx-auto">
@@ -70,6 +72,7 @@ function App() {
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/metrics" element={<MetricsPage />} />
             <Route path="/health" element={<HealthPage />} />
+            <Route path="/csrf" element={<CsrfPage />} />
           </Routes>
         </main>
       </div>

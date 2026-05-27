@@ -25,13 +25,9 @@ api.interceptors.response.use(
     return resp
   },
   (err: AxiosError) => {
-    // silent 模式：不弹 toast、不打印日志（用于 CSRF token 等可选请求）
-    const silent = (err.config as Record<string, unknown>)?.silent
-    if (!silent) {
-      const msg = (err.response?.data as Record<string, unknown>)?.message || err.message
-      toast.error(String(msg))
-      console.error('✗', err.response?.status, err.config?.url, err.response?.data)
-    }
+    const msg = (err.response?.data as Record<string, unknown>)?.message || err.message
+    toast.error(String(msg))
+    console.error('✗', err.response?.status, err.config?.url, err.response?.data)
     return Promise.reject(err)
   }
 )

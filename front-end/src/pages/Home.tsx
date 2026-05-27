@@ -15,6 +15,7 @@ export default function Home() {
     { to: '/logs', label: '审计日志', desc: '操作日志查询' },
     { to: '/metrics', label: 'Prometheus', desc: '指标文本输出' },
     { to: '/health', label: '健康检查', desc: '存活 + 就绪检查' },
+    { to: '/csrf', label: 'CSRF', desc: 'CSRF Token 获取与验证' },
   ]
 
   return (
