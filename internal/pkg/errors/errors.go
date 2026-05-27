@@ -84,7 +84,11 @@ func New(code ErrorCode, httpStatus int, detail interface{}) *AppError {
 
 // BadRequest 400 参数错误
 func BadRequest(detail interface{}) *AppError {
-	return New(CodeValidationError, fiber.StatusBadRequest, detail)
+	err := New(CodeValidationError, fiber.StatusBadRequest, detail)
+	if s, ok := detail.(string); ok {
+		err.Message = s // 将字符串详情作为消息返回，避免显示通用 "参数校验失败"
+	}
+	return err
 }
 
 // Unauthorized 401 未认证

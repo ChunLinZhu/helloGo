@@ -39,10 +39,12 @@ func ErrorHandler(logger *zap.Logger) fiber.Handler {
 			code := appErrors.HTTPStatusToErrorCode(fiberErr.Code)
 			c.Status(fiberErr.Code)
 
-			// Fiber 404 使用自定义消息
+			// 优先使用 Fiber 自带的消息（如 "文件大小超过限制"），否则回退到 i18n 通用消息
 			msg := appErrors.New(code, fiberErr.Code, nil).GetMessage(lang)
 			if fiberErr.Code == fiber.StatusNotFound {
 				msg = appErrors.New(appErrors.CodeNotFound, 404, nil).GetMessage(lang)
+			} else if fiberErr.Message != "" {
+				msg = fiberErr.Message
 			}
 
 			logger.Warn("HTTP 错误",

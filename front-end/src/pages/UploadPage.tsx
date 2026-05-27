@@ -21,9 +21,7 @@ export default function UploadPage() {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const r = await api.post('/api/uploads', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
+      const r = await api.post('/api/uploads', fd)
       setUploadResp(r.data)
     } catch (e: unknown) {
       const err = e as { response?: { data?: unknown } }
@@ -42,22 +40,18 @@ export default function UploadPage() {
         const end = Math.min(start + chunkSize, file.size)
         const blob = file.slice(start, end)
         const fd = new FormData()
-        fd.append('chunk', new File([blob], `chunk-${i}.bin`, { type: file.type }))
+        fd.append('file', new File([blob], `chunk-${i}.bin`, { type: file.type }))
         fd.append('fileId', id)
-        fd.append('index', String(i))
-        fd.append('total', String(total))
+        fd.append('chunkIndex', String(i))
+        fd.append('totalChunks', String(total))
         fd.append('filename', file.name)
-        fd.append('mimetype', file.type)
-        await api.post('/api/uploads/chunk', fd, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        })
+        await api.post('/api/uploads/chunk', fd)
       }
 
       const r = await api.post('/api/uploads/merge', {
         fileId: id,
-        total,
+        totalChunks: total,
         filename: file.name,
-        mimetype: file.type,
       })
       setChunkResp(r.data)
     } catch (e: unknown) {

@@ -88,7 +88,7 @@ func main() {
 	// ── 6. 创建 Fiber 应用 ────────────────────────────────
 	app := fiber.New(fiber.Config{
 		AppName:      "helloGo",
-		BodyLimit:    int(cfg.Upload.MaxSize), // 请求体大小限制（与上传限制一致）
+		BodyLimit:    int(cfg.Upload.MaxSize) * 2, // 请求体大小限制（留出 multipart 开销，文件大小由 service 层校验）
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		// 禁用 Fiber 默认的 Server 头
