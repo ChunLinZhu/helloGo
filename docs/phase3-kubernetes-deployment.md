@@ -119,19 +119,14 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 helm version
 ```
 
-### 1.4 安装 Lens（桌面 GUI）
+### 1.4 Lens 连接集群（已本地安装）
 
-```bash
-# 方式一：官网下载 AppImage
-# https://k8slens.dev/ → 下载 Linux AppImage
-chmod +x Lens-*.AppImage
-./Lens-*.AppImage
+1. 打开 Lens
+2. 左侧 **Catalog → Clusters** → 选择 **minikube**
+3. 点击 **Connect**
+4. 左上角命名空间筛选器中选择 **hellogo**
 
-# 方式二：Snap
-sudo snap install kontena-lens --classic
-```
-
-Lens 打开后会自动检测 minikube 集群，点击连接即可。
+> Lens 自动读取 `~/.kube/config`，minikube 启动后会自动出现在集群列表中。
 
 ### 1.5 配置 minikube Docker 环境
 
@@ -1015,25 +1010,57 @@ kubectl run debug --rm -it --image=busybox -n hellogo -- sh
 # nslookup user-service
 ```
 
-### 7.3 更新镜像（滚动更新）
+### 7.3 更新镜像
+
+修改代码后，有两种更新方式：
+
+**方式一：快速更新（开发阶段，latest 标签）**
+
+只重建改动的那个服务，然后重启 Pod：
 
 ```bash
-# 重新构建镜像
-eval $(minikube docker-env)
-docker build --build-arg SERVICE_NAME=user \
-  -f deploy/docker/Dockerfile.service \
-  -t hellogo/user:v2 .
+# 一行命令：构建镜像 + 重启 Pod
+make k8s-deploy SVC=user
 
-# 更新 Helm release
-helm upgrade hellogo deploy/helm/hellogo/ \
-  --namespace hellogo \
-  --set services.user.tag=v2
+# 等价于：
+make k8s-build-one SVC=user   # 构建 hellogo/user:latest
+make k8s-restart SVC=user     # rollout restart 触发重新拉取
+```
 
-# 查看滚动更新状态
+> 因为 `imagePullPolicy: IfNotPresent` + 标签固定为 `latest`，K8s 不会自动拉取新镜像，必须 `rollout restart`。
+
+**方式二：版本化更新（生产阶段，推荐）**
+
+```bash
+# 1. 构建带版本号的镜像
+make k8s-build-one SVC=user TAG=v1.1.0
+
+# 2. Helm upgrade 指定新版本（自动滚动更新，不需要 rollout restart）
+make k8s-upgrade SVC=user TAG=v1.1.0
+
+# 3. 查看更新状态
 kubectl rollout status deploy/user-service -n hellogo
+```
 
-# 查看历史版本
-kubectl rollout history deploy/user-service -n hellogo
+> 优点：可回滚（`helm rollback`）、可审计（每个版本有明确标签）。
+
+**前端更新：**
+
+```bash
+# 快速更新
+make k8s-build-frontend
+make k8s-restart SVC=frontend
+
+# 版本化更新
+make k8s-build-frontend TAG=v1.1.0
+make k8s-upgrade TAG=v1.1.0  # 注意：前端不区分 SVC
+```
+
+**全部重建（大版本更新）：**
+
+```bash
+make k8s-build       # 重建全部镜像
+make k8s-upgrade     # Helm upgrade（tag 不变时需要 rollout restart）
 ```
 
 ### 7.4 回滚
@@ -1081,95 +1108,37 @@ minikube delete
 
 ## 8. Makefile 目标
 
-在现有 Makefile 中追加以下目标：
+| 目标 | 用法 | 说明 |
+|------|------|------|
+| `k8s-build` | `make k8s-build` | 构建所有镜像（5 后端 + 前端） |
+| `k8s-build-one` | `make k8s-build-one SVC=user` | 构建单个服务镜像（latest 标签） |
+| `k8s-build-one` | `make k8s-build-one SVC=user TAG=v1.1.0` | 构建带版本号的镜像 |
+| `k8s-build-frontend` | `make k8s-build-frontend` | 构建前端镜像 |
+| `k8s-deploy` | `make k8s-deploy SVC=user` | **快速部署：构建 + 重启 Pod** |
+| `k8s-install` | `make k8s-install` | 首次 Helm 安装 |
+| `k8s-upgrade` | `make k8s-upgrade` | Helm 升级（全量） |
+| `k8s-upgrade` | `make k8s-upgrade SVC=user TAG=v1.1.0` | Helm 升级单个服务版本 |
+| `k8s-uninstall` | `make k8s-uninstall` | 卸载 Helm release |
+| `k8s-status` | `make k8s-status` | 查看 Pods + Services + Helm releases |
+| `k8s-logs` | `make k8s-logs SVC=user` | 实时查看日志 |
+| `k8s-shell` | `make k8s-shell SVC=user` | 进入容器 Shell |
+| `k8s-urls` | `make k8s-urls` | 显示前端和 Gateway 访问地址 |
+| `k8s-restart` | `make k8s-restart SVC=user` | 滚动重启指定服务 |
+| `k8s-rollback` | `make k8s-rollback` | 回滚 Helm release 到上一版本 |
 
-```makefile
-# ── Kubernetes / Helm ──────────────────────────────────────────
+**常用工作流：**
 
-## k8s-docker-env: 切换到 minikube Docker 环境
-.PHONY: k8s-docker-env
-k8s-docker-env:
-	@eval $$(minikube docker-env) && echo "已切换到 minikube Docker 环境"
+```bash
+# 开发阶段：改完代码快速更新某个服务
+make k8s-deploy SVC=user
 
-## k8s-build: 构建所有 Docker 镜像（使用 minikube Docker）
-.PHONY: k8s-build
-k8s-build:
-	@eval $$(minikube docker-env) && bash deploy/docker/build.sh
+# 生产阶段：版本化发布
+make k8s-build-one SVC=user TAG=v1.1.0
+make k8s-upgrade SVC=user TAG=v1.1.0
 
-## k8s-build-service: 构建指定服务镜像（用法：make k8s-build-service SVC=user）
-.PHONY: k8s-build-service
-k8s-build-service:
-	@eval $$(minikube docker-env) && \
-	docker build --build-arg SERVICE_NAME=$(SVC) \
-		-f deploy/docker/Dockerfile.service \
-		-t hellogo/$(SVC):latest .
-
-## k8s-build-frontend: 构建前端镜像
-.PHONY: k8s-build-frontend
-k8s-build-frontend:
-	@eval $$(minikube docker-env) && \
-	docker build \
-		--build-arg VITE_API_URL=http://$$(minikube ip):30080 \
-		-f deploy/docker/Dockerfile.frontend \
-		-t hellogo/frontend:latest .
-
-## k8s-install: 首次安装 Helm release
-.PHONY: k8s-install
-k8s-install:
-	helm install hellogo deploy/helm/hellogo/ \
-		--namespace hellogo \
-		--create-namespace
-
-## k8s-upgrade: 升级 Helm release
-.PHONY: k8s-upgrade
-k8s-upgrade:
-	helm upgrade hellogo deploy/helm/hellogo/ \
-		--namespace hellogo
-
-## k8s-uninstall: 卸载 Helm release
-.PHONY: k8s-uninstall
-k8s-uninstall:
-	helm uninstall hellogo -n hellogo
-
-## k8s-status: 查看部署状态
-.PHONY: k8s-status
-k8s-status:
-	@echo "=== Pods ==="
-	@kubectl get pods -n hellogo -o wide
-	@echo ""
-	@echo "=== Services ==="
-	@kubectl get svc -n hellogo
-	@echo ""
-	@echo "=== Helm Releases ==="
-	@helm list -n hellogo
-
-## k8s-logs: 查看指定服务日志（用法：make k8s-logs SVC=user）
-.PHONY: k8s-logs
-k8s-logs:
-	kubectl logs -f deploy/$(SVC)-service -n hellogo --tail=100
-
-## k8s-shell: 进入指定服务容器（用法：make k8s-shell SVC=user）
-.PHONY: k8s-shell
-k8s-shell:
-	kubectl exec -it deploy/$(SVC)-service -n hellogo -- sh
-
-## k8s-urls: 显示所有外部访问地址
-.PHONY: k8s-urls
-k8s-urls:
-	@MINIKUBE_IP=$$(minikube ip); \
-	echo "前端:    http://$${MINIKUBE_IP}:30090"; \
-	echo "Gateway: http://$${MINIKUBE_IP}:30080"; \
-	echo "API:     http://$${MINIKUBE_IP}:30080/api/health"
-
-## k8s-restart: 重启指定服务（用法：make k8s-restart SVC=user）
-.PHONY: k8s-restart
-k8s-restart:
-	kubectl rollout restart deploy/$(SVC)-service -n hellogo
-
-## k8s-rollback: 回滚 Helm release
-.PHONY: k8s-rollback
-k8s-rollback:
-	helm rollback hellogo -n hellogo
+# 出问题了回滚
+make k8s-rollback
+```
 ```
 
 ---

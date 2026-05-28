@@ -1,0 +1,63 @@
+# Helm post-install hook: 执行种子数据（admin 用户 + 测试数据）
+# 在 db-init-job 之后运行（weight: 2 > 1）
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hellogo-seed
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: seed
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        # 等待 MySQL 就绪
+        - name: wait-mysql
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z mysql {{ .Values.mysql.port }}; do echo waiting for mysql; sleep 3; done']
+        # 等待 user-service 启动（确保 AutoMigrate 完成）
+        - name: wait-user-service
+          image: busybox:1.36
+          command: ['sh', '-c', 'until wget -qO- http://user-service:{{ .Values.services.user.healthPort }}/healthz; do echo waiting for user-service; sleep 5; done']
+        # 等待 permission-service 启动
+        - name: wait-permission-service
+          image: busybox:1.36
+          command: ['sh', '-c', 'until wget -qO- http://permission-service:{{ .Values.services.permission.healthPort }}/healthz; do echo waiting for permission-service; sleep 5; done']
+        # 等待 biz-service 启动
+        - name: wait-biz-service
+          image: busybox:1.36
+          command: ['sh', '-c', 'until wget -qO- http://biz-service:{{ .Values.services.biz.healthPort }}/healthz; do echo waiting for biz-service; sleep 5; done']
+      containers:
+        - name: seed
+          image: hellogo/seed:{{ .Values.seed.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          env:
+            - name: DB_HOST
+              value: "mysql"
+            - name: DB_PORT
+              value: "{{ .Values.mysql.port }}"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: hellogo-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: hellogo-config
+                  key: DB_USER
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: hellogo-secrets
+                  key: db-password
+            - name: DB_TYPE
+              value: "mysql"
+            - name: APP_ENV
+              value: "production"

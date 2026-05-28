@@ -159,6 +159,96 @@ run-biz:
 run-gateway:
 	$(GO) run ./cmd/gateway/main.go
 
+# ── Kubernetes / Helm（Phase 3）─────────────────────────
+
+## k8s-build: 构建所有 Docker 镜像（使用 minikube Docker 环境）
+k8s-build:
+	bash deploy/docker/build.sh
+
+## k8s-build-one: 构建单个服务镜像（用法: make k8s-build-one SVC=user）
+k8s-build-one:
+	@eval $$(minikube docker-env) && \
+	docker build --build-arg SERVICE_NAME=$(SVC) \
+		-f deploy/docker/Dockerfile.service \
+		-t hellogo/$(SVC):$(or $(TAG),latest) .
+
+## k8s-build-frontend: 构建前端镜像
+k8s-build-frontend:
+	@eval $$(minikube docker-env) && \
+	docker build \
+		--build-arg VITE_API_URL=http://$$(minikube ip):30080 \
+		-f deploy/docker/Dockerfile.frontend \
+		-t hellogo/frontend:$(or $(TAG),latest) .
+
+## k8s-install: 首次安装 Helm release
+k8s-install:
+	helm install hellogo deploy/helm/hellogo/ \
+		--namespace hellogo \
+		--create-namespace
+
+## k8s-upgrade: 升级 Helm release（可选指定版本: make k8s-upgrade SVC=user TAG=v1.1.0）
+k8s-upgrade:
+ifdef SVC
+	helm upgrade hellogo deploy/helm/hellogo/ \
+		--namespace hellogo \
+		--set services.$(SVC).tag=$(or $(TAG),latest)
+else
+	helm upgrade hellogo deploy/helm/hellogo/ \
+		--namespace hellogo
+endif
+
+## k8s-deploy: 快速部署单个服务（构建 + 重启 Pod，用法: make k8s-deploy SVC=user）
+k8s-deploy: k8s-build-one k8s-restart
+
+## k8s-uninstall: 卸载 Helm release
+k8s-uninstall:
+	helm uninstall hellogo -n hellogo
+
+## k8s-status: 查看部署状态（Pods + Services + Helm releases）
+k8s-status:
+	@echo "=== Pods ==="
+	@kubectl get pods -n hellogo -o wide
+	@echo ""
+	@echo "=== Services ==="
+	@kubectl get svc -n hellogo
+	@echo ""
+	@echo "=== Helm Releases ==="
+	@helm list -n hellogo
+
+## k8s-logs: 查看指定服务日志（用法: make k8s-logs SVC=user）
+k8s-logs:
+	kubectl logs -f deploy/$(SVC)-service -n hellogo --tail=100
+
+## k8s-shell: 进入指定服务容器（用法: make k8s-shell SVC=user）
+k8s-shell:
+	kubectl exec -it deploy/$(SVC)-service -n hellogo -- sh
+
+## k8s-urls: 显示所有外部访问地址
+k8s-urls:
+	@MINIKUBE_IP=$$(minikube ip); \
+	echo "前端:    http://$${MINIKUBE_IP}:30090"; \
+	echo "Gateway: http://$${MINIKUBE_IP}:30080"; \
+	echo "API:     http://$${MINIKUBE_IP}:30080/api/health"
+
+## k8s-restart: 重启指定服务（用法: make k8s-restart SVC=user）
+k8s-restart:
+	kubectl rollout restart deploy/$(SVC)-service -n hellogo
+
+## k8s-rollback: 回滚 Helm release 到上一版本
+k8s-rollback:
+	helm rollback hellogo -n hellogo
+
+## k8s-seed: 手动执行种子数据（首次部署自动执行，此命令用于重新播种）
+k8s-seed:
+	kubectl create job hellogo-seed-manual \
+		--from=job/hellogo-seed \
+		-n hellogo \
+		--dry-run=client -o yaml | \
+		sed 's/hellogo-seed$$/hellogo-seed-manual/' | \
+		kubectl apply -f -
+	@echo "种子数据 Job 已创建，查看日志："
+	@echo "  kubectl logs -f job/hellogo-seed-manual -n hellogo"
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -171,4 +261,7 @@ help:
         lint fmt swagger seed seed-purge \
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
         frontend-install frontend-dev frontend-build \
-        proto proto-install run-user run-auth run-permission run-biz run-gateway help
+        proto proto-install run-user run-auth run-permission run-biz run-gateway \
+        k8s-build k8s-build-one k8s-build-frontend k8s-install k8s-upgrade k8s-deploy k8s-uninstall \
+        k8s-status k8s-logs k8s-shell k8s-urls k8s-restart k8s-rollback k8s-seed \
+        help

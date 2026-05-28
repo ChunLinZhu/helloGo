@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: biz-service
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: biz-service
+  ports:
+    - name: grpc
+      port: {{ .Values.services.biz.grpcPort }}
+      targetPort: grpc

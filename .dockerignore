@@ -1,3 +1,10 @@
+# ── 前端依赖（Dockerfile.frontend 内 npm ci 重建）────────
+front-end/node_modules
+front-end/dist
+
+# ── 部署配置（镜像内不需要）──────────────────────────────
+deploy/helm/
+
 # ── 版本控制 ──────────────────────────────────────────────
 .git
 .gitignore
@@ -36,6 +43,7 @@ docker-compose*.yml
 tmp/
 .env
 Makefile
+scripts/
 
 # ── 系统文件 ──────────────────────────────────────────────
 .DS_Store

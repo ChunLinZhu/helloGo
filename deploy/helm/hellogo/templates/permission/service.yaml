@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: permission-service
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: permission-service
+  ports:
+    - name: grpc
+      port: {{ .Values.services.permission.grpcPort }}
+      targetPort: grpc
