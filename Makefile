@@ -165,16 +165,40 @@ run-gateway:
 k8s-build:
 	bash deploy/docker/build.sh
 
+## k8s-build-one: 构建单个服务镜像（用法: make k8s-build-one SVC=user）
+k8s-build-one:
+	@eval $$(minikube docker-env) && \
+	docker build --build-arg SERVICE_NAME=$(SVC) \
+		-f deploy/docker/Dockerfile.service \
+		-t hellogo/$(SVC):$(or $(TAG),latest) .
+
+## k8s-build-frontend: 构建前端镜像
+k8s-build-frontend:
+	@eval $$(minikube docker-env) && \
+	docker build \
+		--build-arg VITE_API_URL=http://$$(minikube ip):30080 \
+		-f deploy/docker/Dockerfile.frontend \
+		-t hellogo/frontend:$(or $(TAG),latest) .
+
 ## k8s-install: 首次安装 Helm release
 k8s-install:
 	helm install hellogo deploy/helm/hellogo/ \
 		--namespace hellogo \
 		--create-namespace
 
-## k8s-upgrade: 升级 Helm release
+## k8s-upgrade: 升级 Helm release（可选指定版本: make k8s-upgrade SVC=user TAG=v1.1.0）
 k8s-upgrade:
+ifdef SVC
+	helm upgrade hellogo deploy/helm/hellogo/ \
+		--namespace hellogo \
+		--set services.$(SVC).tag=$(or $(TAG),latest)
+else
 	helm upgrade hellogo deploy/helm/hellogo/ \
 		--namespace hellogo
+endif
+
+## k8s-deploy: 快速部署单个服务（构建 + 重启 Pod，用法: make k8s-deploy SVC=user）
+k8s-deploy: k8s-build-one k8s-restart
 
 ## k8s-uninstall: 卸载 Helm release
 k8s-uninstall:
@@ -227,5 +251,6 @@ help:
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
         frontend-install frontend-dev frontend-build \
         proto proto-install run-user run-auth run-permission run-biz run-gateway \
-        k8s-build k8s-install k8s-upgrade k8s-uninstall k8s-status k8s-logs k8s-shell k8s-urls k8s-restart k8s-rollback \
+        k8s-build k8s-build-one k8s-build-frontend k8s-install k8s-upgrade k8s-deploy k8s-uninstall \
+        k8s-status k8s-logs k8s-shell k8s-urls k8s-restart k8s-rollback \
         help
