@@ -15,7 +15,7 @@ type Log struct {
 	Level     string    `gorm:"size:16;not null;index:idx_level_created" json:"level"` // info/warn/error/debug
 	Message   string    `gorm:"size:256;not null" json:"message"`
 	Meta      *string   `gorm:"type:text" json:"meta"` // JSON 格式的元数据
-	CreatedAt time.Time `gorm:"autoCreateTime;not null;index:idx_level_created" json:"createdAt"`
+	CreatedAt time.Time `gorm:"autoCreateTime;index:idx_level_created" json:"createdAt"`
 }
 
 // TableName GORM 表名

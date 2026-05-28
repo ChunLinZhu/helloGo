@@ -16,8 +16,8 @@ type Dict struct {
 	Key         string    `gorm:"size:128;not null;uniqueIndex:idx_type_key" json:"key"`
 	Value       string    `gorm:"size:256;not null" json:"value"`
 	Description *string   `gorm:"size:255" json:"description"`
-	CreatedAt   time.Time `gorm:"autoCreateTime;not null" json:"createdAt"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime;not null" json:"updatedAt"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
 }
 
 // TableName GORM 表名

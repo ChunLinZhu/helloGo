@@ -15,8 +15,8 @@ type Department struct {
 	Name        string    `gorm:"size:128;not null" json:"name"`
 	Description *string   `gorm:"size:256" json:"description"`
 	ParentID    *string   `gorm:"size:36;index" json:"parentId"`
-	CreatedAt   time.Time `gorm:"autoCreateTime;not null" json:"createdAt"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime;not null" json:"updatedAt"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
 
 	// 自引用关联
 	Parent   *Department  `gorm:"foreignKey:ParentID" json:"parent,omitempty"`

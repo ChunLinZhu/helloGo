@@ -15,8 +15,8 @@ type Permission struct {
 	Key         string    `gorm:"size:128;uniqueIndex;not null" json:"key"`
 	Description *string   `gorm:"size:256" json:"description"`
 	RoleID      string    `gorm:"size:36;index;not null" json:"roleId"`
-	CreatedAt   time.Time `gorm:"autoCreateTime;not null" json:"createdAt"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime;not null" json:"updatedAt"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
 }
 
 // TableName GORM 表名

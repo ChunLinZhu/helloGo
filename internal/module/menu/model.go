@@ -17,8 +17,8 @@ type Menu struct {
 	Icon     *string   `gorm:"size:128" json:"icon"`
 	Order    int       `gorm:"default:0;index" json:"order"`
 	ParentID *string   `gorm:"size:36;index" json:"parentId"`
-	CreatedAt time.Time `gorm:"autoCreateTime;not null" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime;not null" json:"updatedAt"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
 
 	// 自引用关联
 	Parent   *Menu  `gorm:"foreignKey:ParentID" json:"parent,omitempty"`

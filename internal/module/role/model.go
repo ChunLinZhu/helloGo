@@ -17,8 +17,8 @@ type Role struct {
 	Code        string                   `gorm:"size:64;uniqueIndex;not null" json:"code"`
 	Name        string                   `gorm:"size:128;not null" json:"name"`
 	Description *string                  `gorm:"size:255" json:"description"`
-	CreatedAt   time.Time                `gorm:"autoCreateTime;not null" json:"createdAt"`
-	UpdatedAt   time.Time                `gorm:"autoUpdateTime;not null" json:"updatedAt"`
+	CreatedAt   time.Time                `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt   time.Time                `gorm:"autoUpdateTime" json:"updatedAt"`
 
 	// 关联关系
 	Permissions []permission.Permission `gorm:"foreignKey:RoleID" json:"permissions,omitempty"`

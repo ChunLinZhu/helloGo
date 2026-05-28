@@ -4,10 +4,12 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -18,8 +20,38 @@ import (
 	"helloGo/internal/config"
 )
 
+// ensureDatabaseExists 确保 MySQL/PostgreSQL 数据库存在
+func ensureDatabaseExists(cfg config.DatabaseConfig, log *zap.Logger) error {
+	switch cfg.Type {
+	case "mysql":
+		// 连接服务器（不指定数据库）
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/",
+			cfg.MySQL.User, cfg.MySQL.Password,
+			cfg.MySQL.Host, cfg.MySQL.Port)
+		db, err := sql.Open("mysql", dsn)
+		if err != nil {
+			return fmt.Errorf("连接 MySQL 服务器失败: %w", err)
+		}
+		defer db.Close()
+		// 建库
+		if _, err := db.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s` DEFAULT CHARACTER SET utf8mb4", cfg.MySQL.Name)); err != nil {
+			return fmt.Errorf("创建数据库失败: %w", err)
+		}
+		log.Info("MySQL 数据库就绪", zap.String("name", cfg.MySQL.Name))
+	case "postgres":
+		// PostgreSQL 需要特殊处理，这里暂时跳过，假设数据库已存在
+		log.Info("PostgreSQL 数据库需手动创建", zap.String("name", cfg.Postgres.Name))
+	}
+	return nil
+}
+
 // Init 初始化 GORM 数据库连接
 func Init(cfg config.DatabaseConfig, appEnv string, log *zap.Logger) (*gorm.DB, error) {
+	// ── 确保数据库存在 ──────────────────────────────────
+	if err := ensureDatabaseExists(cfg, log); err != nil {
+		return nil, err
+	}
+
 	// ── 选择数据库驱动 ────────────────────────────────────
 	var dialector gorm.Dialector
 	dsn := cfg.GetDSN()

@@ -17,7 +17,7 @@ type Upload struct {
 	Mimetype     string    `gorm:"size:128;not null" json:"mimetype"`         // MIME 类型
 	Size         int64     `gorm:"not null" json:"size"`                      // 文件大小（字节）
 	Path         string    `gorm:"size:512;not null" json:"path"`             // 存储路径
-	CreatedAt    time.Time `gorm:"autoCreateTime;not null" json:"createdAt"`
+	CreatedAt    time.Time `gorm:"autoCreateTime" json:"createdAt"`
 }
 
 // TableName GORM 表名

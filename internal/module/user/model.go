@@ -19,8 +19,8 @@ type User struct {
 	Email        *string    `gorm:"size:128;index" json:"email"`
 	Phone        *string    `gorm:"size:32;index" json:"phone"`
 	IsActive     bool       `gorm:"default:true;not null" json:"isActive"`
-	CreatedAt    time.Time  `gorm:"autoCreateTime;not null" json:"createdAt"`
-	UpdatedAt    time.Time  `gorm:"autoUpdateTime;not null" json:"updatedAt"`
+	CreatedAt    time.Time  `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt    time.Time  `gorm:"autoUpdateTime" json:"updatedAt"`
 
 	// 关联关系
 	Roles []role.Role `gorm:"many2many:user_roles;" json:"roles,omitempty"`
