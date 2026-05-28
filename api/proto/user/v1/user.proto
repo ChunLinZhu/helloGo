@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "helloGo/gen/go/user/v1;userv1";
+
+import "google/protobuf/timestamp.proto";
+import "common/v1/common.proto";
+
+// UserService 用户管理服务
+// 提供用户 CRUD 操作，供 API Gateway（HTTP→gRPC）和 Auth Service（用户查询）使用
+service UserService {
+  // ListUsers 分页查询用户列表，支持关键词搜索
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+
+  // GetUser 按 ID 查询单个用户
+  rpc GetUser(GetUserRequest) returns (UserResponse);
+
+  // GetUserByUsername 按用户名查询用户（Auth Service 登录时内部调用）
+  rpc GetUserByUsername(GetUserByUsernameRequest) returns (UserResponse);
+
+  // CreateUser 创建新用户
+  rpc CreateUser(CreateUserRequest) returns (UserResponse);
+
+  // UpdateUser 更新用户信息
+  rpc UpdateUser(UpdateUserRequest) returns (UserResponse);
+
+  // DeleteUser 按 ID 删除用户
+  rpc DeleteUser(DeleteUserRequest) returns (common.v1.Empty);
+}
+
+// User 用户信息
+message User {
+  string id = 1;                          // 用户 ID（UUID）
+  string username = 2;                    // 用户名
+  string email = 3;                       // 邮箱
+  string phone = 4;                       // 手机号
+  bool is_active = 5;                     // 是否启用
+  repeated string role_codes = 6;         // 关联角色编码列表
+  google.protobuf.Timestamp created_at = 7; // 创建时间
+  google.protobuf.Timestamp updated_at = 8; // 更新时间
+}
+
+// ListUsersRequest 用户列表请求
+message ListUsersRequest {
+  common.v1.PaginationRequest pagination = 1; // 分页参数
+  string keyword = 2;                          // 搜索关键词（用户名/邮箱/手机号）
+}
+
+// ListUsersResponse 用户列表响应
+message ListUsersResponse {
+  repeated User users = 1;                          // 用户列表
+  common.v1.PaginationResponse pagination = 2;      // 分页元数据
+}
+
+// GetUserRequest 按 ID 查询请求
+message GetUserRequest {
+  string id = 1;
+}
+
+// GetUserByUsernameRequest 按用户名查询请求
+message GetUserByUsernameRequest {
+  string username = 1;
+}
+
+// CreateUserRequest 创建用户请求
+message CreateUserRequest {
+  string username = 1;                 // 用户名（必填）
+  string password = 2;                 // 密码（必填）
+  string email = 3;                    // 邮箱
+  string phone = 4;                    // 手机号
+  bool is_active = 5;                  // 是否启用，默认 true
+  repeated string role_codes = 6;      // 关联角色编码
+}
+
+// UpdateUserRequest 更新用户请求
+message UpdateUserRequest {
+  string id = 1;                       // 用户 ID（必填）
+  optional string email = 2;           // 邮箱（可选更新）
+  optional string phone = 3;           // 手机号（可选更新）
+  optional bool is_active = 4;         // 是否启用（可选更新）
+  repeated string role_codes = 5;      // 关联角色编码（空数组表示不更新）
+}
+
+// DeleteUserRequest 删除用户请求
+message DeleteUserRequest {
+  string id = 1;
+}
+
+// UserResponse 用户响应
+message UserResponse {
+  User user = 1;
+}
