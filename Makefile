@@ -159,6 +159,61 @@ run-biz:
 run-gateway:
 	$(GO) run ./cmd/gateway/main.go
 
+# ── Kubernetes / Helm（Phase 3）─────────────────────────
+
+## k8s-build: 构建所有 Docker 镜像（使用 minikube Docker 环境）
+k8s-build:
+	bash deploy/docker/build.sh
+
+## k8s-install: 首次安装 Helm release
+k8s-install:
+	helm install hellogo deploy/helm/hellogo/ \
+		--namespace hellogo \
+		--create-namespace
+
+## k8s-upgrade: 升级 Helm release
+k8s-upgrade:
+	helm upgrade hellogo deploy/helm/hellogo/ \
+		--namespace hellogo
+
+## k8s-uninstall: 卸载 Helm release
+k8s-uninstall:
+	helm uninstall hellogo -n hellogo
+
+## k8s-status: 查看部署状态（Pods + Services + Helm releases）
+k8s-status:
+	@echo "=== Pods ==="
+	@kubectl get pods -n hellogo -o wide
+	@echo ""
+	@echo "=== Services ==="
+	@kubectl get svc -n hellogo
+	@echo ""
+	@echo "=== Helm Releases ==="
+	@helm list -n hellogo
+
+## k8s-logs: 查看指定服务日志（用法: make k8s-logs SVC=user）
+k8s-logs:
+	kubectl logs -f deploy/$(SVC)-service -n hellogo --tail=100
+
+## k8s-shell: 进入指定服务容器（用法: make k8s-shell SVC=user）
+k8s-shell:
+	kubectl exec -it deploy/$(SVC)-service -n hellogo -- sh
+
+## k8s-urls: 显示所有外部访问地址
+k8s-urls:
+	@MINIKUBE_IP=$$(minikube ip); \
+	echo "前端:    http://$${MINIKUBE_IP}:30090"; \
+	echo "Gateway: http://$${MINIKUBE_IP}:30080"; \
+	echo "API:     http://$${MINIKUBE_IP}:30080/api/health"
+
+## k8s-restart: 重启指定服务（用法: make k8s-restart SVC=user）
+k8s-restart:
+	kubectl rollout restart deploy/$(SVC)-service -n hellogo
+
+## k8s-rollback: 回滚 Helm release 到上一版本
+k8s-rollback:
+	helm rollback hellogo -n hellogo
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -171,4 +226,6 @@ help:
         lint fmt swagger seed seed-purge \
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
         frontend-install frontend-dev frontend-build \
-        proto proto-install run-user run-auth run-permission run-biz run-gateway help
+        proto proto-install run-user run-auth run-permission run-biz run-gateway \
+        k8s-build k8s-install k8s-upgrade k8s-uninstall k8s-status k8s-logs k8s-shell k8s-urls k8s-restart k8s-rollback \
+        help

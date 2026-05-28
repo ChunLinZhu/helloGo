@@ -1,0 +1,50 @@
+# 后端微服务统一 Dockerfile（多阶段构建）
+# 用法: docker build --build-arg SERVICE_NAME=user -f Dockerfile.service -t hellogo/user:latest .
+
+# ── 阶段一：编译 ──────────────────────────────────────────────
+FROM golang:1.26-alpine AS builder
+
+ARG SERVICE_NAME
+
+RUN apk add --no-cache git gcc musl-dev
+
+WORKDIR /app
+
+# 先复制 go.mod/go.sum，利用 Docker 层缓存
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 复制源码并编译
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-s -w" -o /app/server ./cmd/${SERVICE_NAME}/main.go
+
+# ── 阶段二：运行 ──────────────────────────────────────────────
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata \
+    && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && adduser -D -u 1000 appuser
+
+WORKDIR /app
+
+# 从编译阶段复制二进制
+COPY --from=builder /app/server .
+
+# 复制配置文件
+COPY configs/ ./configs/
+
+# 创建数据目录（SQLite 使用）
+RUN mkdir -p ./data && chown appuser:appuser ./data
+
+# 非 root 用户运行
+USER appuser
+
+# 健康检查（8080 端口）
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -qO- http://localhost:8080/healthz || exit 1
+
+EXPOSE 50001 50002 50003 50004 8000 8080
+
+ENTRYPOINT ["./server"]
