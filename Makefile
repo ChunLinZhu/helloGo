@@ -151,6 +151,10 @@ run-auth:
 run-permission:
 	$(GO) run ./cmd/permission/main.go
 
+## run-biz: 启动 Biz gRPC 微服务（端口 50004）
+run-biz:
+	$(GO) run ./cmd/biz/main.go
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -163,4 +167,4 @@ help:
         lint fmt swagger seed seed-purge \
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
         frontend-install frontend-dev frontend-build \
-        proto proto-install run-user run-auth run-permission help
+        proto proto-install run-user run-auth run-permission run-biz help

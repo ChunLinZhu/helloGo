@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+package biz.v1;
+
+option go_package = "helloGo/gen/go/biz/v1;bizv1";
+
+import "common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// BizService 业务微服务
+// 管理部门、字典、日志、上传文件
+service BizService {
+  // ── 部门（自引用树）──────────────────────────────────
+
+  // ListDepartments 返回完整部门树
+  rpc ListDepartments(ListDepartmentsRequest) returns (ListDepartmentsResponse);
+
+  // CreateDepartment 创建部门
+  rpc CreateDepartment(CreateDepartmentRequest) returns (Department);
+
+  // ── 字典 ──────────────────────────────────────────────
+
+  // ListDicts 分页查询字典
+  rpc ListDicts(ListDictsRequest) returns (ListDictsResponse);
+
+  // CreateDict 创建字典项
+  rpc CreateDict(CreateDictRequest) returns (Dict);
+
+  // ── 日志 ──────────────────────────────────────────────
+
+  // ListLogs 分页查询日志
+  rpc ListLogs(ListLogsRequest) returns (ListLogsResponse);
+
+  // CreateLog 创建日志（供其他服务调用）
+  rpc CreateLog(CreateLogRequest) returns (Log);
+
+  // ── 上传 ──────────────────────────────────────────────
+
+  // ListUploads 分页查询上传文件列表
+  rpc ListUploads(ListUploadsRequest) returns (ListUploadsResponse);
+
+  // ── 健康检查 ──────────────────────────────────────────
+
+  // HealthCheck 健康检查
+  rpc HealthCheck(common.v1.Empty) returns (HealthCheckResponse);
+}
+
+// ============================================================
+// 核心消息
+// ============================================================
+
+// Department 部门（自引用树结构）
+message Department {
+  string id = 1;                       // 部门 ID
+  string name = 2;                     // 部门名称
+  string description = 3;              // 描述
+  string parent_id = 4;                // 父部门 ID（空字符串表示根部门）
+  repeated Department children = 5;    // 子部门
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// Dict 字典项（type + key 组合唯一）
+message Dict {
+  string id = 1;                       // 字典 ID
+  string type = 2;                     // 字典类型
+  string key = 3;                      // 字典键
+  string value = 4;                    // 字典值
+  string description = 5;              // 描述
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// Log 操作日志
+message Log {
+  string id = 1;                       // 日志 ID
+  string level = 2;                    // 日志级别（info/warn/error）
+  string message = 3;                  // 日志消息
+  string meta = 4;                     // 元数据（JSON 字符串）
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// Upload 上传文件记录
+message Upload {
+  string id = 1;                       // 上传记录 ID
+  string filename = 2;                 // 文件名
+  string original_name = 3;            // 原始文件名
+  string mimetype = 4;                 // MIME 类型
+  int64 size = 5;                      // 文件大小（字节）
+  string path = 6;                     // 存储路径
+  google.protobuf.Timestamp created_at = 7;
+}
+
+// HealthCheckResponse 健康检查响应
+message HealthCheckResponse {
+  string status = 1;    // "ok"
+  string service = 2;   // 服务名
+  string version = 3;   // 版本
+}
+
+// ============================================================
+// 部门 请求/响应
+// ============================================================
+
+message ListDepartmentsRequest {}
+
+message ListDepartmentsResponse {
+  repeated Department departments = 1;  // 部门树
+}
+
+message CreateDepartmentRequest {
+  string name = 1;         // 部门名称（必填）
+  string description = 2;  // 描述（可选）
+  string parent_id = 3;    // 父部门 ID（可选，空字符串表示根部门）
+}
+
+// ============================================================
+// 字典 请求/响应
+// ============================================================
+
+message ListDictsRequest {
+  common.v1.PaginationRequest pagination = 1;
+  string keyword = 2;   // 搜索关键词
+  string type = 3;      // 按类型过滤
+}
+
+message ListDictsResponse {
+  repeated Dict dicts = 1;
+  common.v1.PaginationResponse pagination = 2;
+}
+
+message CreateDictRequest {
+  string type = 1;         // 字典类型（必填）
+  string key = 2;          // 字典键（必填，同 type 下唯一）
+  string value = 3;        // 字典值（必填）
+  string description = 4;  // 描述（可选）
+}
+
+// ============================================================
+// 日志 请求/响应
+// ============================================================
+
+message ListLogsRequest {
+  common.v1.PaginationRequest pagination = 1;
+  string level = 2;  // 按级别过滤
+}
+
+message ListLogsResponse {
+  repeated Log logs = 1;
+  common.v1.PaginationResponse pagination = 2;
+}
+
+message CreateLogRequest {
+  string level = 1;    // 日志级别（info/warn/error）
+  string message = 2;  // 日志消息
+  string meta = 3;     // 元数据 JSON（可选）
+}
+
+// ============================================================
+// 上传 请求/响应
+// ============================================================
+
+message ListUploadsRequest {
+  common.v1.PaginationRequest pagination = 1;
+}
+
+message ListUploadsResponse {
+  repeated Upload uploads = 1;
+  common.v1.PaginationResponse pagination = 2;
+}
