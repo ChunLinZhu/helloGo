@@ -119,19 +119,14 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 helm version
 ```
 
-### 1.4 安装 Lens（桌面 GUI）
+### 1.4 Lens 连接集群（已本地安装）
 
-```bash
-# 方式一：官网下载 AppImage
-# https://k8slens.dev/ → 下载 Linux AppImage
-chmod +x Lens-*.AppImage
-./Lens-*.AppImage
+1. 打开 Lens
+2. 左侧 **Catalog → Clusters** → 选择 **minikube**
+3. 点击 **Connect**
+4. 左上角命名空间筛选器中选择 **hellogo**
 
-# 方式二：Snap
-sudo snap install kontena-lens --classic
-```
-
-Lens 打开后会自动检测 minikube 集群，点击连接即可。
+> Lens 自动读取 `~/.kube/config`，minikube 启动后会自动出现在集群列表中。
 
 ### 1.5 配置 minikube Docker 环境
 
