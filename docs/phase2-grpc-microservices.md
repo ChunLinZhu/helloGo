@@ -378,6 +378,12 @@ go run client/main.go
 | **通过接口通信** | 服务间只通过 gRPC 接口交互，不直接访问对方数据库 |
 | **渐进拆分** | 先从单体中拆出最独立的模块（Auth），逐步扩展 |
 
+> **目录迁移说明：** Phase 1 的 `internal/pkg/`（response、errors、pagination、redis）在 Phase 2 中拆分到两个位置：
+> - `internal/shared/` — 微服务共享的**基础设施**代码（config、database、redis、logger、interceptor）
+> - 顶层 `pkg/` — 可复用的**公共包**（errors、pagination、response），可被外部项目引用
+>
+> Phase 1 的 `internal/config/`、`internal/database/` 保留给单体应用（兼容模式），微服务使用 `internal/shared/` 下的新实现。
+
 ### 2.3 拆分方案
 
 从第一阶段的单体应用拆分为 4 个微服务 + 1 个网关：
@@ -459,6 +465,8 @@ helloGo/
 │   │   ├── service.go
 │   │   ├── jwt.go
 │   │   └── session.go                  # Redis 会话管理
+│   │   # 注意：Auth Service 没有 model.go / repository.go / dto.go
+│   │   # 因为 Auth 不直连数据库，用户查询通过 gRPC 调用 User Service
 │   │
 │   ├── permission/                     # Permission 微服务
 │   │   ├── server.go
@@ -1155,6 +1163,11 @@ grpcurl -plaintext -d '{
 ---
 
 ## 5. 认证微服务 (Auth Service)
+
+> **设计决策：** Auth Service 是唯一的"无数据库"微服务。它不直连 MySQL/PostgreSQL，  
+> 用户信息查询通过 gRPC 调用 User Service 完成（见 §5.2）。  
+> Auth Service 只需要 Redis（会话管理 + 登录锁定）和 JWT 密钥。  
+> 因此 Auth Service 没有 model.go / repository.go，与其他服务的标准模块结构不同。
 
 ### 5.1 Proto 定义
 

@@ -1,4 +1,4 @@
-# helloGo 开发计划
+# 第一阶段开发计划：Fiber 单体应用
 
 > 基于 helloNest (NestJS) 项目，使用 Go + Fiber 构建等效后端 API
 
@@ -42,7 +42,10 @@ helloGo/
 │   │   ├── csrf.go                 # CSRF 防护
 │   │   ├── ratelimit.go            # 限流中间件
 │   │   ├── recovery.go             # Panic 恢复
-│   │   └── request_logger.go       # 请求日志（审计）
+│   │   ├── request_logger.go       # 请求日志
+│   │   ├── error_handler.go        # 全局错误处理（AppError/FiberError/未知错误）
+│   │   ├── metrics.go              # Prometheus 指标中间件
+│   │   └── audit.go                # 审计日志持久化（写入数据库）
 │   ├── module/
 │   │   ├── auth/
 │   │   │   ├── handler.go          # 路由处理函数
@@ -85,11 +88,8 @@ helloGo/
 │   │   │   ├── service.go
 │   │   │   ├── model.go            # Upload 实体
 │   │   │   └── cleanup.go          # 定时清理
-│   │   ├── health/
-│   │   │   └── handler.go          # 健康检查
-│   │   └── metrics/
-│   │       ├── handler.go
-│   │       └── service.go          # Prometheus 指标
+│   │   ├── health/                  # 健康检查（目录保留，逻辑在 main.go 中实现）
+│   │   └── metrics/                 # Prometheus 指标（目录保留，逻辑在 main.go 中实现）
 │   ├── guard/
 │   │   ├── jwt_guard.go            # JWT 认证守卫
 │   │   ├── role_guard.go           # 角色守卫
@@ -111,8 +111,7 @@ helloGo/
 ├── data/                            # SQLite 数据文件
 ├── docs/                            # 文档目录
 ├── scripts/
-│   ├── test_curl.sh
-│   └── seed.sh
+│   └── test_curl.sh
 ├── Dockerfile
 ├── docker-compose.yml
 ├── Makefile
@@ -157,6 +156,7 @@ helloGo/
 #### 1.3 数据库连接（`internal/database/`）
 
 - [ ] GORM 初始化，根据 `DB_TYPE` 切换 SQLite / MySQL / PostgreSQL
+- [ ] 启动时自动创建数据库（MySQL: `CREATE DATABASE IF NOT EXISTS`，PostgreSQL: 检查 `pg_database` 后创建）
 - [ ] AutoMigrate 注册所有模型
 - [ ] 连接池配置（MaxOpenConns, MaxIdleConns, ConnMaxLifetime）
 
@@ -629,6 +629,19 @@ Public:
 Authenticated (JWT):
   POST   /api/auth/logout
 
+  GET    /api/dicts
+  GET    /api/dicts/:id
+  GET    /api/logs
+  GET    /api/logs/:id
+  GET    /api/menus/tree
+  GET    /api/departments/tree
+
+  POST   /api/uploads
+  POST   /api/uploads/chunk
+  POST   /api/uploads/merge
+  GET    /api/uploads
+  GET    /api/uploads/:id
+
 Admin:
   GET    /api/users
   GET    /api/users/:id
@@ -637,24 +650,32 @@ Admin:
   DELETE /api/users/:id
 
   GET    /api/roles
+  GET    /api/roles/:id
   POST   /api/roles
-  POST   /api/roles/permission
+  PATCH  /api/roles/:id
+  DELETE /api/roles/:id
+  POST   /api/roles/:id/permissions
 
   GET    /api/permissions
+  GET    /api/permissions/:id
   POST   /api/permissions
   PATCH  /api/permissions/:id
   DELETE /api/permissions/:id
-  POST   /api/permissions/cache/evict
 
-  GET    /api/menus
-  GET    /api/departments
-  GET    /api/dicts
+  GET    /api/menus/:id
+  POST   /api/menus
+  PATCH  /api/menus/:id
+  DELETE /api/menus/:id
 
-  GET    /api/logs
+  GET    /api/departments/:id
+  POST   /api/departments
+  PATCH  /api/departments/:id
+  DELETE /api/departments/:id
+
+  POST   /api/dicts
+  PATCH  /api/dicts/:id
+  DELETE /api/dicts/:id
+
   POST   /api/logs
-
-  POST   /api/uploads
-  GET    /api/uploads
-  POST   /api/uploads/chunk
-  POST   /api/uploads/merge
+  DELETE /api/uploads/:id
 ```

@@ -12,7 +12,7 @@ When behavior is ambiguous, refer to helloNest's implementation.
 
 | Concern | Choice |
 |---|---|
-| Go version | >= 1.22 |
+| Go version | >= 1.26.3 |
 | HTTP framework | Fiber v2 |
 | ORM | GORM |
 | Databases | SQLite (default) / MySQL / PostgreSQL |
@@ -72,7 +72,7 @@ cmd/seed/main.go          # seed data script
 internal/
   config/                 # Viper config
   database/               # GORM init, AutoMigrate
-  middleware/             # trace, cors, csrf, ratelimit, recovery, audit, metrics
+  middleware/             # trace, cors, csrf, ratelimit, recovery, request_logger, error_handler, audit, metrics
   module/{auth,user,role,permission,menu,department,dict,log,upload}/
   guard/                  # jwt guard, role guard
   pkg/{response,errors,pagination,redis}/
@@ -85,6 +85,8 @@ configs/.env.{example,development,production}
 ```
 
 Phase 2 (未开始) will restructure into per-service binaries under `cmd/{gateway,user,auth,permission,biz}/` with shared protobuf definitions.
+
+Phase 3 (未开始) will deploy the microservices to Kubernetes with Helm charts, CI/CD pipelines, HPA auto-scaling, Prometheus/Grafana observability, and multi-environment (dev/staging/production) management.
 
 ## Key Architectural Conventions
 
@@ -105,15 +107,24 @@ Phase 2 (未开始) will restructure into per-service binaries under `cmd/{gatew
 4. `handler.go` — Fiber handlers (depends on service interface)
 5. `dto.go` — request/response structs with `validate` tags
 
+Exception: `auth` module has no `model.go`/`repository.go` — it uses Redis for sessions and JWT, not a database.
+
 **Response envelope.** All JSON responses use `{ code, statusCode, message, data, path, timestamp, requestId }`. Error codes are i18n-aware (zh-CN / en-US, selected via `X-Lang` or `Accept-Language`).
 
-**Auth model.** JWT access + refresh tokens; sessions stored in Redis as `session:{userId}:{sessionId}` with 7-day TTL. Login attempts tracked in Redis (`login:fail:{username}` with 10-min TTL, `login:lock:{username}`). Guard chain order: JWT → Roles → Permissions → Throttle → Audit.
+**Auth model.** JWT access + refresh tokens; sessions stored in Redis as `session:{userId}:{sessionId}` with 7-day TTL. Login attempts tracked in Redis (`login:fail:{username}` with 10-min TTL, `login:lock:{username}`). Middleware chain in `main.go`: `Recovery → Trace → CORS → RequestLogger → ErrorHandler → CSRF → RateLimiter → Metrics`. Route-level guards: `jwtMW` (JWT only) for read-only endpoints, `adminMW` (JWT + RequireRoles("admin")) for write operations.
 
 **Self-referencing trees.** `Menu` and `Department` entities use `ParentID *string` + `Parent *Self` + `Children []Self` with GORM's `BelongsTo`/`HasMany`.
 
 **Redis fallback.** If Redis connection fails at startup, the app degrades to an in-memory cache (`sync.Map`) rather than crashing. This is intentional for dev environments.
 
-**Config priority.** Viper loads config in this order: env vars > `.env.{APP_ENV}` > `.env` > defaults. Key env vars: `APP_ENV`, `PORT`, `DB_TYPE`, `SQLITE_PATH`, `REDIS_HOST/PORT/PASS`, `JWT_SECRET`, `JWT_EXPIRES`, `CORS_ORIGINS`, `THROTTLE_TTL/LIMIT`, `ENABLE_METRICS`, `SWAGGER_ENABLE`, `CSRF_ENABLED`, `UPLOAD_DEST/MAX_SIZE/ALLOWED_TYPES`, `LOGIN_MAX_FAILS`, `LOGIN_LOCK_TTL`.
+**Config priority.** Viper loads config in this order: env vars > `.env.{APP_ENV}` > `.env` > defaults. Key env vars: `APP_ENV`, `PORT`, `DB_TYPE`, `SQLITE_PATH`, `DB_HOST/PORT/USER/PASS/NAME`, `PG_HOST/PORT/USER/PASS/DB`, `REDIS_HOST/PORT/PASS`, `JWT_SECRET`, `JWT_EXPIRES`, `JWT_REFRESH_EXPIRES`, `CORS_ORIGINS`, `THROTTLE_TTL/LIMIT`, `ENABLE_METRICS`, `SWAGGER_ENABLE`, `CSRF_ENABLED/MODE/SECRET`, `UPLOAD_DEST/MAX_SIZE/ALLOWED_TYPES/CLEAN_INTERVAL_SEC/TTL_DAYS`, `LOGIN_MAX_FAILS`, `LOGIN_LOCK_TTL`.
+
+**Database auto-creation.** On startup, `internal/database/database.go` automatically creates the database if it doesn't exist:
+- **MySQL**: `CREATE DATABASE IF NOT EXISTS hellogo` (connects without DB name first)
+- **PostgreSQL**: connects to `postgres` DB, checks `pg_database`, creates if missing
+- **SQLite**: GORM auto-creates the file
+
+This means you don't need to manually create the database before running the app.
 
 ## Phase 2: gRPC Microservices
 
@@ -129,6 +140,10 @@ Phase 2 splits the monolith into 4 gRPC services + 1 API Gateway:
 
 Gateway validates JWT via `Auth.VerifyToken` gRPC call and checks permissions via `Permission.CheckPermission`. Proto definitions live in `api/proto/{service}/v1/*.proto`; generated code goes to `gen/go/` (gitignored). Service discovery uses etcd with TTL-based registration; load balancing uses gRPC's built-in `round_robin`. Observability via OpenTelemetry + Jaeger for distributed tracing.
 
+**Key design decisions:**
+- Auth Service does not connect to any database — user queries go through gRPC calls to User Service.
+- Phase 1's `internal/pkg/` (response, errors, pagination, redis) migrates to `internal/shared/` (config, database, redis, logger, interceptor) for Phase 2. Phase 1's `internal/config/` and `internal/database/` are preserved for backward compatibility.
+
 ## Testing
 
 - Unit tests: mock DB + Redis per service layer (`mockgen` for generating mocks)
@@ -138,9 +153,10 @@ Gateway validates JWT via `Auth.VerifyToken` gRPC call and checks permissions vi
 
 ## Reference Docs
 
-- `docs/development-plan.md` — Phase 1 (Fiber monolith) plan, full API route table, DB schema, time estimates
+- `docs/phase0-dev-environment-setup.md` — Ubuntu 22.04 + macOS environment setup (Go, Docker, Redis, MySQL, PG, tooling)
+- `docs/phase1-fiber-monolith.md` — Phase 1 (Fiber monolith) plan, full API route table, DB schema, time estimates
 - `docs/phase2-grpc-microservices.md` — Phase 2 (gRPC) plan with proto definitions, service split, example code for each layer
-- `docs/dev-environment-setup.md` — Ubuntu 22.04 + macOS environment setup (Go, Docker, Redis, MySQL, PG, tooling)
+- `docs/phase3-kubernetes-deployment.md` — Phase 3 (K8s) plan with Helm charts, CI/CD, HPA, observability, multi-environment strategy
 
 ## Language
 

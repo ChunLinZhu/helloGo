@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.uber.org/zap"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -39,8 +40,31 @@ func ensureDatabaseExists(cfg config.DatabaseConfig, log *zap.Logger) error {
 		}
 		log.Info("MySQL 数据库就绪", zap.String("name", cfg.MySQL.Name))
 	case "postgres":
-		// PostgreSQL 需要特殊处理，这里暂时跳过，假设数据库已存在
-		log.Info("PostgreSQL 数据库需手动创建", zap.String("name", cfg.Postgres.Name))
+		// 先连到默认的 postgres 库，再检查/创建目标库
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=disable",
+			cfg.Postgres.Host, cfg.Postgres.Port,
+			cfg.Postgres.User, cfg.Postgres.Password)
+		db, err := sql.Open("pgx", dsn)
+		if err != nil {
+			return fmt.Errorf("连接 PostgreSQL 服务器失败: %w", err)
+		}
+		defer db.Close()
+		// 检查库是否存在
+		var exists bool
+		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", cfg.Postgres.Name).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("检查数据库失败: %w", err)
+		}
+		if !exists {
+			// CREATE DATABASE 不能在事务中执行，也不能用参数化查询
+			// 库名来自配置（可控），直接拼接
+			if _, err := db.Exec(fmt.Sprintf(`CREATE DATABASE "%s"`, cfg.Postgres.Name)); err != nil {
+				return fmt.Errorf("创建数据库失败: %w", err)
+			}
+			log.Info("PostgreSQL 数据库已创建", zap.String("name", cfg.Postgres.Name))
+		} else {
+			log.Info("PostgreSQL 数据库已存在", zap.String("name", cfg.Postgres.Name))
+		}
 	}
 	return nil
 }

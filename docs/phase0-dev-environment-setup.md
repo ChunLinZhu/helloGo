@@ -65,8 +65,8 @@ sudo apt install -y build-essential curl wget git unzip ca-certificates \
 ### 2.2 安装 Go
 
 ```bash
-# 设置版本号（请根据实际最新版本调整）
-GO_VERSION="1.23.4"
+# 设置版本号（应与项目 go.mod 中的 go 指令一致，见 go.mod 第 3 行）
+GO_VERSION="1.26.3"
 
 # 下载 Go 安装包
 wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz
@@ -94,7 +94,7 @@ source ~/.bashrc
 
 # 验证安装
 go version
-# 预期输出: go version go1.23.4 linux/amd64
+# 预期输出: go version go1.26.3 linux/amd64
 ```
 
 > **国内网络提示：** `GOPROXY=https://goproxy.cn,direct` 使用七牛云代理加速模块下载。如不需要可改为 `https://proxy.golang.org,direct`。
@@ -217,9 +217,11 @@ sudo systemctl restart mysql
 ### 2.6 安装 PostgreSQL 15（可选）
 
 ```bash
-# 添加 PostgreSQL 官方源
-sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+# 添加 PostgreSQL 官方源（使用 gpg 替代已废弃的 apt-key）
+sudo install -d /usr/share/postgresql-common/pgdg
+sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    https://www.postgresql.org/media/keys/ACCC4CF8.asc
+sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
 sudo apt update
 sudo apt install -y postgresql-15
 
@@ -352,8 +354,8 @@ go env GOROOT GOPATH
 > **版本管理替代方案：** 如需管理多个 Go 版本，可用 [gvm](https://github.com/moovweb/gvm)：
 > ```bash
 > bash < <(curl -s -S -L https://raw.githubusercontent.com/moovweb/gvm/master/binscripts/gvm-installer)
-> gvm install go1.23.4
-> gvm use go1.23.4 --default
+> gvm install go1.26.3
+> gvm use go1.26.3 --default
 > ```
 
 ### 3.3 安装 Docker Desktop
@@ -539,10 +541,7 @@ echo "macOS: $(sw_vers -productVersion)"
 git clone <repo-url> helloGo
 cd helloGo
 
-# 初始化 Go Module（如果尚未初始化）
-go mod init helloGo
-
-# 安装依赖
+# 安装依赖（项目已有 go.mod，直接 tidy 即可）
 go mod tidy
 
 # 验证依赖完整性
@@ -556,13 +555,20 @@ go mod verify
 cp configs/.env.example configs/.env
 
 # 编辑 .env，根据本地环境修改
-# 关键配置项：
+# 关键配置项（参照 configs/.env.example）：
 #   DB_TYPE=sqlite
-#   SQLITE_PATH=./data/hello.db
-#   REDIS_HOST=127.0.0.1
+#   SQLITE_PATH=./data/sqlite.db
+#   REDIS_HOST=localhost
 #   REDIS_PORT=6379
-#   JWT_SECRET=your-dev-secret-key-change-in-production
+#   JWT_SECRET=change_me_please
 ```
+
+> **数据库自动创建：** 应用启动时会自动检查并创建数据库（`internal/database/database.go`）：
+> - **SQLite**：GORM 自动创建文件，无需手动操作
+> - **MySQL**：先连接服务器（不指定库），执行 `CREATE DATABASE IF NOT EXISTS`
+> - **PostgreSQL**：先连接 `postgres` 库，检查目标库是否存在，不存在则创建
+>
+> 所以不需要手动创建 `hellogo` 数据库，只需确保 MySQL/PostgreSQL 服务已启动且用户有建库权限。
 
 ### 4.3 启动项目
 
@@ -822,10 +828,10 @@ go version
 which go
 go env GOROOT
 
-# Ubuntu: 手动指定版本
+# Ubuntu: 手动指定版本（与 go.mod 保持一致）
 sudo rm -rf /usr/local/go
-wget https://go.dev/dl/go1.23.4.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.23.4.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.26.3.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.26.3.linux-amd64.tar.gz
 
 # macOS: 使用 Homebrew 升级
 brew upgrade go
@@ -847,11 +853,10 @@ kill -9 <PID>
 ### Q6: VS Code 中 Go 工具安装失败
 
 ```bash
-# 手动安装所有 Go 工具
+# 手动安装核心 Go 工具（gopls 已替代 godef 等旧工具）
 go install golang.org/x/tools/gopls@latest
 go install github.com/go-delve/delve/cmd/dlv@latest
 go install golang.org/x/tools/cmd/goimports@latest
-go install github.com/rogpeppe/godef@latest
 go install github.com/ramya-rao-a/go-outline@latest
 go install github.com/cweill/gotests/gotests@latest
 go install github.com/fatih/gomodifytags@latest

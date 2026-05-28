@@ -23,7 +23,6 @@ import (
 func AutoMigrate(db *gorm.DB, log *zap.Logger) error {
 	models := []interface{}{
 		// 1. 独立表（无外键依赖）
-		&permission.Permission{},
 		&dict.Dict{},
 		&logModel.Log{},
 		&upload.Upload{},
@@ -32,10 +31,13 @@ func AutoMigrate(db *gorm.DB, log *zap.Logger) error {
 		&menu.Menu{},
 		&department.Department{},
 
-		// 3. 角色（依赖 Permission）
+		// 3. 角色（无外键；Permission 和 User 均依赖此表，必须先创建）
 		&role.Role{},
 
-		// 4. 用户（依赖 Role，通过 user_roles 中间表）
+		// 4. 权限（role_id 外键 → roles 表）
+		&permission.Permission{},
+
+		// 5. 用户（通过 user_roles 中间表多对多关联 roles）
 		&user.User{},
 	}
 
