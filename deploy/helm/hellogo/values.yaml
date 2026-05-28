@@ -119,3 +119,7 @@ frontend:
     limits:
       cpu: 200m
       memory: 128Mi
+
+# ── 种子数据 ──────────────────────────────────────────────────
+seed:
+  tag: latest

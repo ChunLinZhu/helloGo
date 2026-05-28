@@ -238,6 +238,17 @@ k8s-restart:
 k8s-rollback:
 	helm rollback hellogo -n hellogo
 
+## k8s-seed: 手动执行种子数据（首次部署自动执行，此命令用于重新播种）
+k8s-seed:
+	kubectl create job hellogo-seed-manual \
+		--from=job/hellogo-seed \
+		-n hellogo \
+		--dry-run=client -o yaml | \
+		sed 's/hellogo-seed$$/hellogo-seed-manual/' | \
+		kubectl apply -f -
+	@echo "种子数据 Job 已创建，查看日志："
+	@echo "  kubectl logs -f job/hellogo-seed-manual -n hellogo"
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -252,5 +263,5 @@ help:
         frontend-install frontend-dev frontend-build \
         proto proto-install run-user run-auth run-permission run-biz run-gateway \
         k8s-build k8s-build-one k8s-build-frontend k8s-install k8s-upgrade k8s-deploy k8s-uninstall \
-        k8s-status k8s-logs k8s-shell k8s-urls k8s-restart k8s-rollback \
+        k8s-status k8s-logs k8s-shell k8s-urls k8s-restart k8s-rollback k8s-seed \
         help

@@ -19,6 +19,14 @@ for svc in user auth permission biz gateway; do
 done
 
 echo ""
+echo "=== 构建 seed 镜像 ==="
+echo ">>> 构建 hellogo/seed:latest ..."
+docker build \
+    -f deploy/docker/Dockerfile.seed \
+    -t hellogo/seed:latest \
+    .
+
+echo ""
 echo "=== 构建前端镜像 ==="
 MINIKUBE_IP=$(minikube ip)
 echo ">>> 构建 hellogo/frontend:latest (API_URL=http://${MINIKUBE_IP}:30080) ..."
