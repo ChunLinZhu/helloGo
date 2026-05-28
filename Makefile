@@ -147,6 +147,10 @@ run-user:
 run-auth:
 	$(GO) run ./cmd/auth/main.go
 
+## run-permission: 启动 Permission gRPC 微服务（端口 50003）
+run-permission:
+	$(GO) run ./cmd/permission/main.go
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -159,4 +163,4 @@ help:
         lint fmt swagger seed seed-purge \
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
         frontend-install frontend-dev frontend-build \
-        proto proto-install run-user run-auth help
+        proto proto-install run-user run-auth run-permission help
