@@ -60,6 +60,7 @@ make k8s-install
 4. 部署 5 个微服务（各自等待 MySQL/Redis 就绪后启动）
 5. 部署 Gateway（NodePort 30080）+ Frontend（NodePort 30090）
 6. 各服务启动时自动建表（AutoMigrate）
+7. 执行 `seed-job`（创建 admin 用户 + 测试数据）
 
 ### 4. 等待就绪
 
@@ -97,6 +98,28 @@ curl http://$(minikube ip):30080/api/health
 ```
 
 浏览器打开前端地址即可使用。
+
+### 6. 种子数据
+
+**首次部署时自动执行：**
+- `seed-job` 作为 Helm post-install hook 自动运行
+- 等待 user-service、permission-service、biz-service 健康检查通过
+- 创建 admin 用户（`admin` / `admin123`）
+- 创建 10 个角色 + 20 个权限 + 100 个测试用户 + 菜单/部门/字典/日志
+
+**⚠️ 注意：`helm upgrade` 不会重新执行 seed-job**
+
+这是设计意图——避免覆盖用户手动修改的数据。如需重新播种：
+
+```bash
+make k8s-seed
+```
+
+查看 seed 日志：
+
+```bash
+kubectl logs -f job/hellogo-seed-manual -n hellogo
+```
 
 ---
 
