@@ -12,11 +12,13 @@ type Repository interface {
 	FindRoleByID(id string) (*Role, error)
 	FindRoleByCode(code string) (*Role, error)
 	ListRoles(page, limit int, keyword string) ([]Role, int64, error)
+	DeleteRole(id string) error
 	AssociatePermissions(roleID string, permissionIDs []string) error
 
 	// 权限
 	CreatePermission(perm *Permission) error
 	FindPermissionByID(id string) (*Permission, error)
+	FindPermissionsByKeys(keys []string) ([]Permission, error)
 	UpdatePermission(perm *Permission) error
 	DeletePermission(id string) error
 	ListPermissions(page, limit int, keyword string) ([]Permission, int64, error)
@@ -109,6 +111,18 @@ func (r *repository) AssociatePermissions(roleID string, permissionIDs []string)
 		Update("role_id", roleID).Error
 }
 
+// DeleteRole 删除角色（同时解除权限关联）
+func (r *repository) DeleteRole(id string) error {
+	// 先解除该角色的所有权限关联
+	if err := r.db.Model(&Permission{}).
+		Where("role_id = ?", id).
+		Update("role_id", "").Error; err != nil {
+		return err
+	}
+
+	return r.db.Where("id = ?", id).Delete(&Role{}).Error
+}
+
 // ── 权限 ──────────────────────────────────────────────────────
 
 // CreatePermission 创建权限
@@ -124,6 +138,13 @@ func (r *repository) FindPermissionByID(id string) (*Permission, error) {
 		return nil, err
 	}
 	return &perm, nil
+}
+
+// FindPermissionsByKeys 按权限 key 列表查询权限
+func (r *repository) FindPermissionsByKeys(keys []string) ([]Permission, error) {
+	var perms []Permission
+	err := r.db.Where("`key` IN ?", keys).Find(&perms).Error
+	return perms, err
 }
 
 // UpdatePermission 更新权限

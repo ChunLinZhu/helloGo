@@ -2,6 +2,8 @@
 package gateway
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/gofiber/fiber/v2"
@@ -73,6 +75,29 @@ func New(port int, conns *Connections, corsOrigins string, logger *zap.Logger) *
 		})
 	})
 
+	app.Get("/api/health/ready", func(c *fiber.Ctx) error {
+		return response.SuccessOK(c, fiber.Map{
+			"service": "gateway",
+			"status":  "ready",
+		})
+	})
+
+	// ── CSRF Token（公开，兼容前端）──────────────────
+	app.Get("/api/csrf-token", func(c *fiber.Ctx) error {
+		// 微服务架构下 CSRF 可由 Gateway 统一生成
+		// 前端仅需一个 token 值，此处返回随机字符串
+		token := generateCSRFToken()
+		return response.SuccessOK(c, fiber.Map{
+			"csrfToken": token,
+		})
+	})
+
+	// ── Metrics（公开，Prometheus 格式）────────────────
+	app.Get("/api/metrics", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/plain; charset=utf-8")
+		return c.SendString("# Gateway metrics endpoint (stub)\n# Integrate with Prometheus client in production\n")
+	})
+
 	// ── Auth 路由（公开）──────────────────────────────
 	auth := app.Group("/api/auth")
 	auth.Post("/login", authHandler.Login)
@@ -97,20 +122,25 @@ func New(port int, conns *Connections, corsOrigins string, logger *zap.Logger) *
 	roles := app.Group("/api/roles", jwtMW)
 	roles.Get("/", permHandler.ListRoles)
 	roles.Post("/", permHandler.CreateRole)
+	roles.Get("/:id", permHandler.GetRole)
+	roles.Delete("/:id", permHandler.DeleteRole)
 	roles.Post("/:id/permissions", permHandler.AddPermissionToRole)
 
 	permissions := app.Group("/api/permissions", jwtMW)
 	permissions.Get("/", permHandler.ListPermissions)
 	permissions.Post("/", permHandler.CreatePermission)
+	permissions.Get("/:id", permHandler.GetPermission)
 	permissions.Patch("/:id", permHandler.UpdatePermission)
 	permissions.Delete("/:id", permHandler.DeletePermission)
 
 	menus := app.Group("/api/menus", jwtMW)
 	menus.Get("/", permHandler.ListMenus)
+	menus.Get("/tree", permHandler.ListMenus) // 前端使用 /api/menus/tree
 
 	// ── Biz 路由（受保护）────────────────────────────
 	departments := app.Group("/api/departments", jwtMW)
 	departments.Get("/", bizHandler.ListDepartments)
+	departments.Get("/tree", bizHandler.ListDepartments) // 前端使用 /api/departments/tree
 	departments.Post("/", bizHandler.CreateDepartment)
 
 	dicts := app.Group("/api/dicts", jwtMW)
@@ -122,6 +152,10 @@ func New(port int, conns *Connections, corsOrigins string, logger *zap.Logger) *
 
 	uploads := app.Group("/api/uploads", jwtMW)
 	uploads.Get("/", bizHandler.ListUploads)
+	uploads.Post("/", bizHandler.UploadFile)
+	uploads.Post("/chunk", bizHandler.UploadChunk)
+	uploads.Post("/merge", bizHandler.MergeChunks)
+	uploads.Delete("/:id", bizHandler.DeleteUpload)
 
 	return &Server{
 		app:    app,
@@ -138,4 +172,11 @@ func (s *Server) Start() error {
 		zap.String("addr", addr),
 	)
 	return s.app.Listen(addr)
+}
+
+// generateCSRFToken 生成随机 CSRF Token
+func generateCSRFToken() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

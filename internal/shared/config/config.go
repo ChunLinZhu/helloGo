@@ -12,12 +12,13 @@ import (
 
 // Config 微服务共享配置项
 type Config struct {
-	Service  ServiceConfig
-	Database DatabaseConfig
-	Redis    RedisConfig
-	JWT      JWTConfig
-	Login    LoginConfig
-	Services ServiceAddrs
+	Service     ServiceConfig
+	Database    DatabaseConfig
+	Redis       RedisConfig
+	JWT         JWTConfig
+	Login       LoginConfig
+	Services    ServiceAddrs
+	CorsOrigins string // CORS 允许的源（逗号分隔，"*" 表示全部允许）
 }
 
 // ServiceConfig 服务基本信息
@@ -195,6 +196,12 @@ func Load(serviceName string, configDir string) (*Config, error) {
 	cfg.Services.AuthAddr = v.GetString("AUTH_SERVICE_ADDR")
 	cfg.Services.PermissionAddr = v.GetString("PERMISSION_SERVICE_ADDR")
 	cfg.Services.BizAddr = v.GetString("BIZ_SERVICE_ADDR")
+
+	// CORS
+	cfg.CorsOrigins = v.GetString("CORS_ORIGINS")
+	if cfg.CorsOrigins == "" {
+		cfg.CorsOrigins = "*"
+	}
 
 	return cfg, nil
 }

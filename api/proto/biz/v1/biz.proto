@@ -39,6 +39,9 @@ service BizService {
   // ListUploads 分页查询上传文件列表
   rpc ListUploads(ListUploadsRequest) returns (ListUploadsResponse);
 
+  // DeleteUpload 删除上传文件记录
+  rpc DeleteUpload(DeleteUploadRequest) returns (common.v1.Empty);
+
   // ── 健康检查 ──────────────────────────────────────────
 
   // HealthCheck 健康检查
@@ -167,4 +170,8 @@ message ListUploadsRequest {
 message ListUploadsResponse {
   repeated Upload uploads = 1;
   common.v1.PaginationResponse pagination = 2;
+}
+
+message DeleteUploadRequest {
+  string id = 1;  // 上传记录 ID
 }

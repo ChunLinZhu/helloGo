@@ -63,12 +63,44 @@ func (h *PermissionHandler) CreateRole(c *fiber.Ctx) error {
 	return response.SuccessCreated(c, resp.Role)
 }
 
+// GetRole 按 ID 查询角色
+func (h *PermissionHandler) GetRole(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	resp, err := h.client.GetRole(c.Context(), &permissionv1.GetRoleRequest{
+		Id: id,
+	})
+	if err != nil {
+		return HandleGRPCError(c, err)
+	}
+
+	return response.SuccessOK(c, resp.Role)
+}
+
+// DeleteRole 删除角色
+func (h *PermissionHandler) DeleteRole(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	_, err := h.client.DeleteRole(c.Context(), &permissionv1.DeleteRoleRequest{
+		Id: id,
+	})
+	if err != nil {
+		return HandleGRPCError(c, err)
+	}
+
+	return response.SuccessNoContent(c)
+}
+
 // AddPermissionToRole 为角色添加权限
+// 前端发送 { permissionCodes: [...] }，转为 gRPC 的 permission_keys
 func (h *PermissionHandler) AddPermissionToRole(c *fiber.Ctx) error {
 	roleId := c.Params("id")
 
-	var req permissionv1.AddPermissionToRoleRequest
-	if err := c.BodyParser(&req); err != nil {
+	// 前端发送 { permissionCodes: ["user:create", "user:view", ...] }
+	var body struct {
+		PermissionCodes []string `json:"permissionCodes"`
+	}
+	if err := c.BodyParser(&body); err != nil {
 		c.Status(fiber.StatusBadRequest)
 		return c.JSON(fiber.Map{
 			"code":       "VALIDATION_ERROR",
@@ -78,8 +110,10 @@ func (h *PermissionHandler) AddPermissionToRole(c *fiber.Ctx) error {
 		})
 	}
 
-	req.RoleId = roleId
-	resp, err := h.client.AddPermissionToRole(c.Context(), &req)
+	resp, err := h.client.AddPermissionToRole(c.Context(), &permissionv1.AddPermissionToRoleRequest{
+		RoleId:         roleId,
+		PermissionKeys: body.PermissionCodes,
+	})
 	if err != nil {
 		return HandleGRPCError(c, err)
 	}
@@ -109,9 +143,15 @@ func (h *PermissionHandler) ListPermissions(c *fiber.Ctx) error {
 }
 
 // CreatePermission 创建权限
+// 前端发送 { code, name, description }，映射为 gRPC 的 { key, description }
 func (h *PermissionHandler) CreatePermission(c *fiber.Ctx) error {
-	var req permissionv1.CreatePermissionRequest
-	if err := c.BodyParser(&req); err != nil {
+	// 前端字段: code → key, name → 合并到 description
+	var body struct {
+		Code        string `json:"code"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := c.BodyParser(&body); err != nil {
 		c.Status(fiber.StatusBadRequest)
 		return c.JSON(fiber.Map{
 			"code":       "VALIDATION_ERROR",
@@ -121,12 +161,35 @@ func (h *PermissionHandler) CreatePermission(c *fiber.Ctx) error {
 		})
 	}
 
-	resp, err := h.client.CreatePermission(c.Context(), &req)
+	// code 映射为 key，name 作为 description 的一部分
+	desc := body.Description
+	if desc == "" && body.Name != "" {
+		desc = body.Name
+	}
+
+	resp, err := h.client.CreatePermission(c.Context(), &permissionv1.CreatePermissionRequest{
+		Key:         body.Code,
+		Description: desc,
+	})
 	if err != nil {
 		return HandleGRPCError(c, err)
 	}
 
 	return response.SuccessCreated(c, resp)
+}
+
+// GetPermission 按 ID 查询权限
+func (h *PermissionHandler) GetPermission(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	resp, err := h.client.GetPermission(c.Context(), &permissionv1.GetPermissionRequest{
+		Id: id,
+	})
+	if err != nil {
+		return HandleGRPCError(c, err)
+	}
+
+	return response.SuccessOK(c, resp)
 }
 
 // UpdatePermission 更新权限

@@ -86,6 +86,43 @@ func (s *Service) CreateRole(ctx context.Context, req *permissionv1.CreateRoleRe
 	return &permissionv1.RoleResponse{Role: toProtoRole(created)}, nil
 }
 
+// GetRole 按 ID 查询角色
+func (s *Service) GetRole(ctx context.Context, req *permissionv1.GetRoleRequest) (*permissionv1.RoleResponse, error) {
+	if req.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "角色 ID 不能为空")
+	}
+
+	role, err := s.repo.FindRoleByID(req.Id)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "角色不存在")
+	}
+
+	return &permissionv1.RoleResponse{Role: toProtoRole(role)}, nil
+}
+
+// DeleteRole 删除角色
+func (s *Service) DeleteRole(ctx context.Context, req *permissionv1.DeleteRoleRequest) (*commonv1.Empty, error) {
+	if req.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "角色 ID 不能为空")
+	}
+
+	role, err := s.repo.FindRoleByID(req.Id)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "角色不存在")
+	}
+
+	if err := s.repo.DeleteRole(req.Id); err != nil {
+		return nil, status.Errorf(codes.Internal, "删除角色失败: %v", err)
+	}
+
+	// 清除缓存
+	s.invalidateRolePermCache(ctx, role.Code)
+
+	s.logger.Info("角色删除成功", zap.String("code", role.Code), zap.String("id", req.Id))
+
+	return &commonv1.Empty{}, nil
+}
+
 // AddPermissionToRole 为角色分配权限（全量替换）
 func (s *Service) AddPermissionToRole(ctx context.Context, req *permissionv1.AddPermissionToRoleRequest) (*permissionv1.RoleResponse, error) {
 	if req.RoleId == "" {
@@ -98,8 +135,21 @@ func (s *Service) AddPermissionToRole(ctx context.Context, req *permissionv1.Add
 		return nil, status.Error(codes.NotFound, "角色不存在")
 	}
 
+	// 确定权限 ID 列表：优先使用 permission_keys，其次使用 permission_ids
+	permIDs := req.PermissionIds
+	if len(req.PermissionKeys) > 0 {
+		perms, err := s.repo.FindPermissionsByKeys(req.PermissionKeys)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "查询权限失败: %v", err)
+		}
+		permIDs = make([]string, len(perms))
+		for i, p := range perms {
+			permIDs[i] = p.ID
+		}
+	}
+
 	// 全量替换权限关联
-	if err := s.repo.AssociatePermissions(req.RoleId, req.PermissionIds); err != nil {
+	if err := s.repo.AssociatePermissions(req.RoleId, permIDs); err != nil {
 		return nil, status.Errorf(codes.Internal, "分配权限失败: %v", err)
 	}
 
@@ -108,7 +158,7 @@ func (s *Service) AddPermissionToRole(ctx context.Context, req *permissionv1.Add
 
 	s.logger.Info("角色权限分配成功",
 		zap.String("roleId", req.RoleId),
-		zap.Int("permCount", len(req.PermissionIds)),
+		zap.Int("permCount", len(permIDs)),
 	)
 
 	// 重新查询以获取最新关联
@@ -138,16 +188,35 @@ func (s *Service) ListPermissions(ctx context.Context, req *permissionv1.ListPer
 	}, nil
 }
 
+// GetPermission 按 ID 查询权限
+func (s *Service) GetPermission(ctx context.Context, req *permissionv1.GetPermissionRequest) (*permissionv1.PermissionMsg, error) {
+	if req.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "权限 ID 不能为空")
+	}
+
+	perm, err := s.repo.FindPermissionByID(req.Id)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "权限不存在")
+	}
+
+	return toProtoPermission(perm), nil
+}
+
 // CreatePermission 创建权限
 func (s *Service) CreatePermission(ctx context.Context, req *permissionv1.CreatePermissionRequest) (*permissionv1.PermissionMsg, error) {
-	if req.Key == "" || req.RoleId == "" {
-		return nil, status.Error(codes.InvalidArgument, "权限标识和角色 ID 不能为空")
+	if req.Key == "" {
+		return nil, status.Error(codes.InvalidArgument, "权限标识不能为空")
+	}
+
+	roleID := ""
+	if req.RoleId != nil {
+		roleID = *req.RoleId
 	}
 
 	perm := &Permission{
 		Key:         req.Key,
 		Description: nilIfEmpty(req.Description),
-		RoleID:      req.RoleId,
+		RoleID:      roleID,
 	}
 
 	if err := s.repo.CreatePermission(perm); err != nil {
@@ -156,8 +225,10 @@ func (s *Service) CreatePermission(ctx context.Context, req *permissionv1.Create
 	}
 
 	// 清除该角色的权限缓存
-	if role, err := s.repo.FindRoleByID(req.RoleId); err == nil {
-		s.invalidateRolePermCache(ctx, role.Code)
+	if roleID != "" {
+		if role, err := s.repo.FindRoleByID(roleID); err == nil {
+			s.invalidateRolePermCache(ctx, role.Code)
+		}
 	}
 
 	s.logger.Info("权限创建成功", zap.String("key", perm.Key), zap.String("id", perm.ID))

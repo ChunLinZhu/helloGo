@@ -170,6 +170,21 @@ func (s *Service) ListUploads(ctx context.Context, req *bizv1.ListUploadsRequest
 	}, nil
 }
 
+// DeleteUpload 删除上传文件记录
+func (s *Service) DeleteUpload(ctx context.Context, req *bizv1.DeleteUploadRequest) (*commonv1.Empty, error) {
+	if req.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "上传记录 ID 不能为空")
+	}
+
+	if err := s.repo.DeleteUpload(req.Id); err != nil {
+		return nil, status.Errorf(codes.Internal, "删除上传记录失败: %v", err)
+	}
+
+	s.logger.Info("上传记录删除成功", zap.String("id", req.Id))
+
+	return &commonv1.Empty{}, nil
+}
+
 // ── 健康检查 ──────────────────────────────────────────────────
 
 // HealthCheck 健康检查

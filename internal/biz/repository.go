@@ -21,6 +21,7 @@ type Repository interface {
 
 	// 上传
 	ListUploads(page, limit int) ([]Upload, int64, error)
+	DeleteUpload(id string) error
 }
 
 // repository 业务数据访问实现
@@ -133,4 +134,9 @@ func (r *repository) ListUploads(page, limit int) ([]Upload, int64, error) {
 		Find(&uploads).Error
 
 	return uploads, total, err
+}
+
+// DeleteUpload 删除上传文件记录
+func (r *repository) DeleteUpload(id string) error {
+	return r.db.Where("id = ?", id).Delete(&Upload{}).Error
 }

@@ -135,3 +135,50 @@ func (h *BizHandler) ListUploads(c *fiber.Ctx) error {
 	return response.SuccessPage(c, resp.Uploads, resp.Pagination.Total,
 		int(resp.Pagination.Page), int(resp.Pagination.Limit))
 }
+
+// DeleteUpload 删除上传文件
+func (h *BizHandler) DeleteUpload(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	_, err := h.client.DeleteUpload(c.Context(), &bizv1.DeleteUploadRequest{
+		Id: id,
+	})
+	if err != nil {
+		return HandleGRPCError(c, err)
+	}
+
+	return response.SuccessNoContent(c)
+}
+
+// UploadFile 普通文件上传（存根 — 微服务架构下文件上传需独立设计）
+func (h *BizHandler) UploadFile(c *fiber.Ctx) error {
+	c.Status(fiber.StatusNotImplemented)
+	return c.JSON(fiber.Map{
+		"code":       "NOT_IMPLEMENTED",
+		"statusCode": 501,
+		"message":    "文件上传功能在微服务架构下需要独立设计，暂不支持",
+		"path":       c.Path(),
+	})
+}
+
+// UploadChunk 分片上传（存根）
+func (h *BizHandler) UploadChunk(c *fiber.Ctx) error {
+	c.Status(fiber.StatusNotImplemented)
+	return c.JSON(fiber.Map{
+		"code":       "NOT_IMPLEMENTED",
+		"statusCode": 501,
+		"message":    "分片上传功能在微服务架构下需要独立设计，暂不支持",
+		"path":       c.Path(),
+	})
+}
+
+// MergeChunks 合并分片（存根）
+func (h *BizHandler) MergeChunks(c *fiber.Ctx) error {
+	c.Status(fiber.StatusNotImplemented)
+	return c.JSON(fiber.Map{
+		"code":       "NOT_IMPLEMENTED",
+		"statusCode": 501,
+		"message":    "分片合并功能在微服务架构下需要独立设计，暂不支持",
+		"path":       c.Path(),
+	})
+}

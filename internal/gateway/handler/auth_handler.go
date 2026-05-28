@@ -36,7 +36,13 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		return HandleGRPCError(c, err)
 	}
 
-	return response.SuccessOK(c, resp)
+	// 前端期望 camelCase 字段名
+	return response.SuccessOK(c, fiber.Map{
+		"accessToken":  resp.AccessToken,
+		"refreshToken": resp.RefreshToken,
+		"sessionId":    resp.SessionId,
+		"expiresIn":    resp.ExpiresIn,
+	})
 }
 
 // RefreshToken 刷新令牌
@@ -57,13 +63,21 @@ func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 		return HandleGRPCError(c, err)
 	}
 
-	return response.SuccessOK(c, resp)
+	// 前端期望 camelCase 字段名
+	return response.SuccessOK(c, fiber.Map{
+		"accessToken":  resp.AccessToken,
+		"refreshToken": resp.RefreshToken,
+		"sessionId":    resp.SessionId,
+		"expiresIn":    resp.ExpiresIn,
+	})
 }
 
 // Logout 用户登出
 func (h *AuthHandler) Logout(c *fiber.Ctx) error {
-	var req authv1.LogoutRequest
-	if err := c.BodyParser(&req); err != nil {
+	var body struct {
+		SessionId string `json:"sessionId"`
+	}
+	if err := c.BodyParser(&body); err != nil {
 		c.Status(fiber.StatusBadRequest)
 		return c.JSON(fiber.Map{
 			"code":       "VALIDATION_ERROR",
@@ -73,7 +87,13 @@ func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 		})
 	}
 
-	_, err := h.client.Logout(c.Context(), &req)
+	// 从 JWT 中间件注入的用户 ID
+	userID, _ := c.Locals("userId").(string)
+
+	_, err := h.client.Logout(c.Context(), &authv1.LogoutRequest{
+		SessionId: body.SessionId,
+		UserId:    userID,
+	})
 	if err != nil {
 		return HandleGRPCError(c, err)
 	}
@@ -99,13 +119,22 @@ func (h *AuthHandler) RequestPasswordReset(c *fiber.Ctx) error {
 		return HandleGRPCError(c, err)
 	}
 
-	return response.SuccessOK(c, resp)
+	// 前端查找 data.token 或 data.resetToken
+	return response.SuccessOK(c, fiber.Map{
+		"token":      resp.ResetToken,
+		"resetToken": resp.ResetToken,
+	})
 }
 
 // ConfirmPasswordReset 确认密码重置
 func (h *AuthHandler) ConfirmPasswordReset(c *fiber.Ctx) error {
-	var req authv1.ConfirmPasswordResetRequest
-	if err := c.BodyParser(&req); err != nil {
+	// 前端发送 { username, newPassword, token }
+	var body struct {
+		Username    string `json:"username"`
+		NewPassword string `json:"newPassword"`
+		Token       string `json:"token"`
+	}
+	if err := c.BodyParser(&body); err != nil {
 		c.Status(fiber.StatusBadRequest)
 		return c.JSON(fiber.Map{
 			"code":       "VALIDATION_ERROR",
@@ -115,7 +144,11 @@ func (h *AuthHandler) ConfirmPasswordReset(c *fiber.Ctx) error {
 		})
 	}
 
-	_, err := h.client.ConfirmPasswordReset(c.Context(), &req)
+	_, err := h.client.ConfirmPasswordReset(c.Context(), &authv1.ConfirmPasswordResetRequest{
+		ResetToken:  body.Token,
+		NewPassword: body.NewPassword,
+		Username:    body.Username,
+	})
 	if err != nil {
 		return HandleGRPCError(c, err)
 	}

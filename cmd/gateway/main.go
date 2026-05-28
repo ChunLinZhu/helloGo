@@ -91,14 +91,8 @@ func main() {
 		Biz:        bizv1.NewBizServiceClient(bizConn),
 	}
 
-	// 5. 读取 CORS 配置
-	corsOrigins := os.Getenv("CORS_ORIGINS")
-	if corsOrigins == "" {
-		corsOrigins = "*"
-	}
-
-	// 6. 创建并启动 Gateway
-	srv := gateway.New(cfg.Service.HTTPPort, conns, corsOrigins, log)
+	// 5. 创建并启动 Gateway（CORS 从配置文件读取）
+	srv := gateway.New(cfg.Service.HTTPPort, conns, cfg.CorsOrigins, log)
 	if err := srv.Start(); err != nil {
 		log.Fatal("Gateway 启动失败", zap.Error(err))
 	}
