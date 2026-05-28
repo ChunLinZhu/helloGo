@@ -11,6 +11,7 @@ import (
 	"helloGo/internal/biz"
 	"helloGo/internal/shared/config"
 	"helloGo/internal/shared/database"
+	"helloGo/internal/shared/health"
 	"helloGo/internal/shared/logger"
 )
 
@@ -36,6 +37,12 @@ func main() {
 	if err != nil {
 		log.Fatal("数据库初始化失败", zap.Error(err))
 	}
+
+	// 3.5 启动健康检查服务（K8s 探针，端口 8080）
+	sqlDB, _ := db.DB()
+	healthSrv := health.NewServer(8080, log, health.DBCheck(sqlDB))
+	healthSrv.Start()
+	defer healthSrv.Stop()
 
 	// 4. 自动迁移 Biz Service 模型
 	if err := database.AutoMigrate(db, log,

@@ -11,6 +11,7 @@ import (
 	"helloGo/internal/permission"
 	"helloGo/internal/shared/config"
 	"helloGo/internal/shared/database"
+	"helloGo/internal/shared/health"
 	"helloGo/internal/shared/logger"
 	sharedredis "helloGo/internal/shared/redis"
 )
@@ -50,6 +51,16 @@ func main() {
 	// 5. 初始化 Redis（权限缓存）
 	redisClient := sharedredis.New(cfg.Redis, log)
 	defer redisClient.Close()
+
+	// 5.5 启动健康检查服务（K8s 探针，端口 8080）
+	sqlDB, _ := db.DB()
+	healthChecks := []health.CheckFunc{health.DBCheck(sqlDB)}
+	if redisClient.IsRedis() {
+		healthChecks = append(healthChecks, health.RedisCheck(redisClient.Ping))
+	}
+	healthSrv := health.NewServer(8080, log, healthChecks...)
+	healthSrv.Start()
+	defer healthSrv.Stop()
 
 	// 6. 构建依赖链：Repository → Service → Server
 	repo := permission.NewRepository(db)

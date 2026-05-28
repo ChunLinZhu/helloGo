@@ -16,6 +16,7 @@ import (
 	userv1 "helloGo/gen/go/user/v1"
 	"helloGo/internal/gateway"
 	"helloGo/internal/shared/config"
+	"helloGo/internal/shared/health"
 	"helloGo/internal/shared/logger"
 )
 
@@ -35,6 +36,11 @@ func main() {
 		zap.Int("httpPort", cfg.Service.HTTPPort),
 		zap.String("env", cfg.Service.Env),
 	)
+
+	// 2.5 启动健康检查服务（K8s 探针，端口 8080）
+	healthSrv := health.NewServer(8080, log)
+	healthSrv.Start()
+	defer healthSrv.Stop()
 
 	// 3. 连接到后端微服务
 	log.Info("连接后端微服务...")
