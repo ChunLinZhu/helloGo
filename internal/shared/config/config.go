@@ -16,6 +16,8 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	JWT      JWTConfig
+	Login    LoginConfig
+	Services ServiceAddrs
 }
 
 // ServiceConfig 服务基本信息
@@ -69,6 +71,20 @@ type JWTConfig struct {
 	Secret         string // 签名密钥
 	Expires        string // access token 过期时间（如 "1d", "2h"）
 	RefreshExpires string // refresh token 过期时间（如 "7d"）
+}
+
+// LoginConfig 登录安全配置
+type LoginConfig struct {
+	MaxFails int // 最大连续失败次数（默认 5）
+	LockTTL  int // 锁定时长秒数（默认 600）
+}
+
+// ServiceAddrs 微服务地址（服务间调用用）
+type ServiceAddrs struct {
+	UserAddr       string // User Service gRPC 地址（如 "localhost:50001"）
+	AuthAddr       string // Auth Service gRPC 地址
+	PermissionAddr string // Permission Service gRPC 地址
+	BizAddr        string // Biz Service gRPC 地址
 }
 
 // GetDSN 根据数据库类型返回 GORM 连接字符串
@@ -170,6 +186,16 @@ func Load(serviceName string, configDir string) (*Config, error) {
 	cfg.JWT.Expires = v.GetString("JWT_EXPIRES")
 	cfg.JWT.RefreshExpires = v.GetString("JWT_REFRESH_EXPIRES")
 
+	// 登录安全
+	cfg.Login.MaxFails = v.GetInt("LOGIN_MAX_FAILS")
+	cfg.Login.LockTTL = v.GetInt("LOGIN_LOCK_TTL")
+
+	// 服务地址
+	cfg.Services.UserAddr = v.GetString("USER_SERVICE_ADDR")
+	cfg.Services.AuthAddr = v.GetString("AUTH_SERVICE_ADDR")
+	cfg.Services.PermissionAddr = v.GetString("PERMISSION_SERVICE_ADDR")
+	cfg.Services.BizAddr = v.GetString("BIZ_SERVICE_ADDR")
+
 	return cfg, nil
 }
 
@@ -203,4 +229,14 @@ func setDefaults(v *viper.Viper, serviceName string) {
 	v.SetDefault("JWT_SECRET", "change_me_please")
 	v.SetDefault("JWT_EXPIRES", "1d")
 	v.SetDefault("JWT_REFRESH_EXPIRES", "7d")
+
+	// 登录安全
+	v.SetDefault("LOGIN_MAX_FAILS", 5)
+	v.SetDefault("LOGIN_LOCK_TTL", 600) // 10 分钟
+
+	// 服务地址
+	v.SetDefault("USER_SERVICE_ADDR", "localhost:50001")
+	v.SetDefault("AUTH_SERVICE_ADDR", "localhost:50002")
+	v.SetDefault("PERMISSION_SERVICE_ADDR", "localhost:50003")
+	v.SetDefault("BIZ_SERVICE_ADDR", "localhost:50004")
 }

@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "helloGo/gen/go/auth/v1;authv1";
+
+import "common/v1/common.proto";
+
+// AuthService 认证服务
+// 提供登录、Token 管理、密码重置、账户解锁等功能
+// 无数据库，通过 gRPC 调用 User Service 获取用户信息
+service AuthService {
+  // Login 用户登录
+  rpc Login(LoginRequest) returns (LoginResponse);
+
+  // RefreshToken 刷新 access token
+  rpc RefreshToken(RefreshTokenRequest) returns (LoginResponse);
+
+  // Logout 用户注销
+  rpc Logout(LogoutRequest) returns (common.v1.Empty);
+
+  // VerifyToken 验证 access token（供 API Gateway 调用）
+  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+
+  // RequestPasswordReset 请求密码重置
+  rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
+
+  // ConfirmPasswordReset 确认密码重置
+  rpc ConfirmPasswordReset(ConfirmPasswordResetRequest) returns (common.v1.Empty);
+
+  // UnlockAccount 解锁账户
+  rpc UnlockAccount(UnlockAccountRequest) returns (common.v1.Empty);
+}
+
+// LoginRequest 登录请求
+message LoginRequest {
+  string username = 1; // 用户名
+  string password = 2; // 密码
+}
+
+// LoginResponse 登录响应
+message LoginResponse {
+  string access_token = 1;  // JWT access token
+  string refresh_token = 2; // JWT refresh token
+  string session_id = 3;    // 会话 ID
+  int64 expires_in = 4;     // access token 过期时间（秒）
+}
+
+// RefreshTokenRequest 刷新 Token 请求
+message RefreshTokenRequest {
+  string refresh_token = 1; // refresh token
+  string session_id = 2;    // 会话 ID
+}
+
+// LogoutRequest 注销请求
+message LogoutRequest {
+  string session_id = 1; // 会话 ID
+  string user_id = 2;    // 用户 ID
+}
+
+// VerifyTokenRequest 验证 Token 请求
+message VerifyTokenRequest {
+  string token = 1; // access token
+}
+
+// VerifyTokenResponse 验证 Token 响应
+message VerifyTokenResponse {
+  string user_id = 1;           // 用户 ID
+  string username = 2;          // 用户名
+  repeated string roles = 3;    // 角色编码列表
+}
+
+// RequestPasswordResetRequest 请求密码重置请求
+message RequestPasswordResetRequest {
+  string username = 1; // 用户名
+}
+
+// RequestPasswordResetResponse 请求密码重置响应
+message RequestPasswordResetResponse {
+  string reset_token = 1; // 重置令牌（生产环境应通过邮件发送）
+}
+
+// ConfirmPasswordResetRequest 确认密码重置请求
+message ConfirmPasswordResetRequest {
+  string reset_token = 1;  // 重置令牌
+  string new_password = 2; // 新密码
+  string username = 3;     // 用户名
+}
+
+// UnlockAccountRequest 解锁账户请求
+message UnlockAccountRequest {
+  string username = 1; // 用户名
+}

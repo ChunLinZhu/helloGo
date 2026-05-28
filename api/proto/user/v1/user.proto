@@ -27,6 +27,13 @@ service UserService {
 
   // DeleteUser 按 ID 删除用户
   rpc DeleteUser(DeleteUserRequest) returns (common.v1.Empty);
+
+  // VerifyPassword 验证用户名和密码（Auth Service 登录时调用）
+  // 密码校验在 User Service 内部完成，密码哈希不离开服务边界
+  rpc VerifyPassword(VerifyPasswordRequest) returns (VerifyPasswordResponse);
+
+  // UpdatePassword 更新用户密码（Auth Service 密码重置时调用）
+  rpc UpdatePassword(UpdatePasswordRequest) returns (common.v1.Empty);
 }
 
 // User 用户信息
@@ -90,4 +97,21 @@ message DeleteUserRequest {
 // UserResponse 用户响应
 message UserResponse {
   User user = 1;
+}
+
+// VerifyPasswordRequest 验证密码请求
+message VerifyPasswordRequest {
+  string username = 1;  // 用户名
+  string password = 2;  // 明文密码
+}
+
+// VerifyPasswordResponse 验证密码响应
+message VerifyPasswordResponse {
+  User user = 1;  // 验证成功返回用户信息
+}
+
+// UpdatePasswordRequest 更新密码请求
+message UpdatePasswordRequest {
+  string username = 1;      // 用户名
+  string new_password = 2;  // 新明文密码
 }

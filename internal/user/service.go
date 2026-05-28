@@ -238,6 +238,57 @@ func (s *Service) DeleteUser(ctx context.Context, req *userv1.DeleteUserRequest)
 	return &commonv1.Empty{}, nil
 }
 
+// VerifyPassword 验证用户名和密码（Auth Service 调用）
+func (s *Service) VerifyPassword(ctx context.Context, req *userv1.VerifyPasswordRequest) (*userv1.VerifyPasswordResponse, error) {
+	if req.Username == "" || req.Password == "" {
+		return nil, status.Error(codes.InvalidArgument, "用户名和密码不能为空")
+	}
+
+	user, err := s.repo.FindByUsername(req.Username)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "用户名或密码错误")
+	}
+
+	if !user.IsActive {
+		return nil, status.Error(codes.PermissionDenied, "用户已禁用")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		return nil, status.Error(codes.Unauthenticated, "用户名或密码错误")
+	}
+
+	return &userv1.VerifyPasswordResponse{User: toProtoUser(user)}, nil
+}
+
+// UpdatePassword 更新用户密码（Auth Service 密码重置时调用）
+func (s *Service) UpdatePassword(ctx context.Context, req *userv1.UpdatePasswordRequest) (*commonv1.Empty, error) {
+	if req.Username == "" || req.NewPassword == "" {
+		return nil, status.Error(codes.InvalidArgument, "用户名和新密码不能为空")
+	}
+
+	user, err := s.repo.FindByUsername(req.Username)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, "用户不存在")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "密码哈希失败: %v", err)
+	}
+
+	user.PasswordHash = string(hash)
+	if err := s.repo.Update(user); err != nil {
+		return nil, status.Errorf(codes.Internal, "更新密码失败: %v", err)
+	}
+
+	s.logger.Info("用户密码更新成功",
+		zap.String("userId", user.ID),
+		zap.String("username", user.Username),
+	)
+
+	return &commonv1.Empty{}, nil
+}
+
 // toProtoUser 将 GORM 模型转为 proto 消息
 func toProtoUser(u *User) *userv1.User {
 	email, phone := "", ""

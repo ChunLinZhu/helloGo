@@ -143,6 +143,10 @@ proto-install:
 run-user:
 	$(GO) run ./cmd/user/main.go
 
+## run-auth: 启动 Auth gRPC 微服务（端口 50002，需先启动 User Service）
+run-auth:
+	$(GO) run ./cmd/auth/main.go
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -155,4 +159,4 @@ help:
         lint fmt swagger seed seed-purge \
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
         frontend-install frontend-dev frontend-build \
-        proto proto-install run-user help
+        proto proto-install run-user run-auth help

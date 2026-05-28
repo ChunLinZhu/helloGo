@@ -84,6 +84,22 @@ func (c *Client) Get(ctx context.Context, key string) (string, error) {
 	return "", goredis.Nil
 }
 
+// Exists 检查键是否存在
+func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
+	if c.isRedis {
+		n, err := c.rdb.Exists(ctx, key).Result()
+		return n > 0, err
+	}
+	if v, ok := c.fallback.Load(key); ok {
+		entry := v.(fallbackEntry)
+		if entry.expiresAt.IsZero() || time.Now().Before(entry.expiresAt) {
+			return true, nil
+		}
+		c.fallback.Delete(key)
+	}
+	return false, nil
+}
+
 // Set 设置键值（带 TTL）
 func (c *Client) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
 	if c.isRedis {
