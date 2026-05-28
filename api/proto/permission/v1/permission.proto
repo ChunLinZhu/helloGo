@@ -1,0 +1,218 @@
+syntax = "proto3";
+
+package permission.v1;
+
+option go_package = "helloGo/gen/go/permission/v1;permissionv1";
+
+import "common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// PermissionService 权限微服务
+// 管理角色、权限、菜单权限，提供权限校验接口供 Gateway 调用
+service PermissionService {
+  // ── 角色管理 ──────────────────────────────────────────
+
+  // ListRoles 分页查询角色列表
+  rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
+
+  // CreateRole 创建角色
+  rpc CreateRole(CreateRoleRequest) returns (RoleResponse);
+
+  // GetRole 按 ID 查询角色
+  rpc GetRole(GetRoleRequest) returns (RoleResponse);
+
+  // DeleteRole 删除角色
+  rpc DeleteRole(DeleteRoleRequest) returns (common.v1.Empty);
+
+  // AddPermissionToRole 为角色分配权限（全量替换）
+  rpc AddPermissionToRole(AddPermissionToRoleRequest) returns (RoleResponse);
+
+  // ── 权限管理 ──────────────────────────────────────────
+
+  // ListPermissions 分页查询权限列表
+  rpc ListPermissions(ListPermissionsRequest) returns (ListPermissionsResponse);
+
+  // CreatePermission 创建权限
+  rpc CreatePermission(CreatePermissionRequest) returns (PermissionMsg);
+
+  // GetPermission 按 ID 查询权限
+  rpc GetPermission(GetPermissionRequest) returns (PermissionMsg);
+
+  // UpdatePermission 更新权限
+  rpc UpdatePermission(UpdatePermissionRequest) returns (PermissionMsg);
+
+  // DeletePermission 删除权限
+  rpc DeletePermission(DeletePermissionRequest) returns (common.v1.Empty);
+
+  // ── 权限校验（Gateway 调用）────────────────────────────
+
+  // CheckPermission 检查角色是否拥有指定权限
+  rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+
+  // GetUserPermissions 获取用户所有权限（按角色聚合，带 Redis 缓存）
+  rpc GetUserPermissions(GetUserPermissionsRequest) returns (GetUserPermissionsResponse);
+
+  // ── 菜单 ──────────────────────────────────────────────
+
+  // ListMenus 返回完整菜单树
+  rpc ListMenus(ListMenusRequest) returns (ListMenusResponse);
+}
+
+// ============================================================
+// 核心消息
+// ============================================================
+
+// Role 角色
+message Role {
+  string id = 1;                              // 角色 ID
+  string code = 2;                            // 角色代码（如 "admin"）
+  string name = 3;                            // 角色名称
+  string description = 4;                     // 描述
+  repeated string permission_keys = 5;        // 权限 key 列表
+  google.protobuf.Timestamp created_at = 6;   // 创建时间
+  google.protobuf.Timestamp updated_at = 7;   // 更新时间
+}
+
+// PermissionMsg 权限（命名为 Msg 避免与 Go 关键字冲突）
+message PermissionMsg {
+  string id = 1;                              // 权限 ID
+  string key = 2;                             // 权限标识（如 "user:create"）
+  string description = 3;                     // 描述
+  string role_id = 4;                         // 所属角色 ID
+  google.protobuf.Timestamp created_at = 5;   // 创建时间
+  google.protobuf.Timestamp updated_at = 6;   // 更新时间
+}
+
+// Menu 菜单（自引用树结构）
+message Menu {
+  string id = 1;                  // 菜单 ID
+  string name = 2;                // 菜单名称
+  string path = 3;                // 路由路径
+  string icon = 4;                // 图标
+  int32 order = 5;                // 排序
+  string parent_id = 6;           // 父菜单 ID（空字符串表示根菜单）
+  repeated Menu children = 7;     // 子菜单
+}
+
+// ============================================================
+// 角色 请求/响应
+// ============================================================
+
+// ListRolesRequest 角色列表请求
+message ListRolesRequest {
+  common.v1.PaginationRequest pagination = 1;  // 分页参数
+  string keyword = 2;                           // 搜索关键词（code/name）
+}
+
+// ListRolesResponse 角色列表响应
+message ListRolesResponse {
+  repeated Role roles = 1;                          // 角色列表
+  common.v1.PaginationResponse pagination = 2;      // 分页信息
+}
+
+// CreateRoleRequest 创建角色请求
+message CreateRoleRequest {
+  string code = 1;         // 角色代码（必填，唯一）
+  string name = 2;         // 角色名称（必填）
+  string description = 3;  // 描述（可选）
+}
+
+// RoleResponse 角色响应
+message RoleResponse {
+  Role role = 1;  // 角色信息
+}
+
+// GetRoleRequest 按 ID 查询角色请求
+message GetRoleRequest {
+  string id = 1;  // 角色 ID
+}
+
+// DeleteRoleRequest 删除角色请求
+message DeleteRoleRequest {
+  string id = 1;  // 角色 ID
+}
+
+// AddPermissionToRoleRequest 为角色分配权限请求（全量替换）
+message AddPermissionToRoleRequest {
+  string role_id = 1;                 // 角色 ID
+  repeated string permission_ids = 2; // 权限 ID 列表（空列表 = 清除所有权限）
+  repeated string permission_keys = 3; // 权限 Key 列表（前端传 code，优先级高于 permission_ids）
+}
+
+// ============================================================
+// 权限 请求/响应
+// ============================================================
+
+// ListPermissionsRequest 权限列表请求
+message ListPermissionsRequest {
+  common.v1.PaginationRequest pagination = 1;  // 分页参数
+  string keyword = 2;                           // 搜索关键词（key/description）
+}
+
+// ListPermissionsResponse 权限列表响应
+message ListPermissionsResponse {
+  repeated PermissionMsg permissions = 1;           // 权限列表
+  common.v1.PaginationResponse pagination = 2;      // 分页信息
+}
+
+// CreatePermissionRequest 创建权限请求
+message CreatePermissionRequest {
+  string key = 1;          // 权限标识（必填，唯一，如 "user:create"）
+  string description = 2;  // 描述（可选）
+  optional string role_id = 3; // 所属角色 ID（可选，创建时可不绑定角色）
+}
+
+// GetPermissionRequest 按 ID 查询权限请求
+message GetPermissionRequest {
+  string id = 1;  // 权限 ID
+}
+
+// UpdatePermissionRequest 更新权限请求
+message UpdatePermissionRequest {
+  string id = 1;           // 权限 ID（必填）
+  string key = 2;          // 新权限标识（可选，空字符串表示不更新）
+  string description = 3;  // 新描述（可选）
+  string role_id = 4;      // 新角色 ID（可选，空字符串表示不更新）
+}
+
+// DeletePermissionRequest 删除权限请求
+message DeletePermissionRequest {
+  string id = 1;  // 权限 ID
+}
+
+// ============================================================
+// 权限校验 请求/响应
+// ============================================================
+
+// CheckPermissionRequest 权限校验请求
+message CheckPermissionRequest {
+  repeated string role_codes = 1;   // 用户角色代码列表
+  string required_permission = 2;   // 需要校验的权限 key
+}
+
+// CheckPermissionResponse 权限校验响应
+message CheckPermissionResponse {
+  bool allowed = 1;  // 是否拥有权限
+}
+
+// GetUserPermissionsRequest 获取用户权限请求
+message GetUserPermissionsRequest {
+  repeated string role_codes = 1;  // 用户角色代码列表
+}
+
+// GetUserPermissionsResponse 获取用户权限响应
+message GetUserPermissionsResponse {
+  repeated string permissions = 1;  // 所有权限 key 列表（去重）
+}
+
+// ============================================================
+// 菜单 请求/响应
+// ============================================================
+
+// ListMenusRequest 菜单列表请求（无参数，返回完整树）
+message ListMenusRequest {}
+
+// ListMenusResponse 菜单列表响应（树结构）
+message ListMenusResponse {
+  repeated Menu menus = 1;  // 菜单树（根节点列表）
+}

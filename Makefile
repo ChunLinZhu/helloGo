@@ -126,6 +126,39 @@ frontend-dev:
 frontend-build:
 	cd front-end && npm run build
 
+# ── Proto（Phase 2）──────────────────────────────────────
+
+## proto: 生成 Protobuf Go 代码
+proto:
+	bash scripts/gen-proto.sh
+
+## proto-install: 安装 protoc Go 插件（首次使用需执行）
+proto-install:
+	$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# ── 微服务（Phase 2）─────────────────────────────────────
+
+## run-user: 启动 User gRPC 微服务（端口 50001）
+run-user:
+	$(GO) run ./cmd/user/main.go
+
+## run-auth: 启动 Auth gRPC 微服务（端口 50002，需先启动 User Service）
+run-auth:
+	$(GO) run ./cmd/auth/main.go
+
+## run-permission: 启动 Permission gRPC 微服务（端口 50003）
+run-permission:
+	$(GO) run ./cmd/permission/main.go
+
+## run-biz: 启动 Biz gRPC 微服务（端口 50004）
+run-biz:
+	$(GO) run ./cmd/biz/main.go
+
+## run-gateway: 启动 API Gateway（端口 8000，需先启动所有微服务）
+run-gateway:
+	$(GO) run ./cmd/gateway/main.go
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -137,4 +170,5 @@ help:
 .PHONY: build run run-dev test test-cover test-verbose test-unit test-integration test-e2e \
         lint fmt swagger seed seed-purge \
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
-        frontend-install frontend-dev frontend-build help
+        frontend-install frontend-dev frontend-build \
+        proto proto-install run-user run-auth run-permission run-biz run-gateway help

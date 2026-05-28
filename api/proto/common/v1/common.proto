@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package common.v1;
+
+option go_package = "helloGo/gen/go/common/v1;commonv1";
+
+// PaginationRequest 分页请求参数
+message PaginationRequest {
+  int32 page = 1;  // 页码，从 1 开始
+  int32 limit = 2; // 每页数量
+}
+
+// PaginationResponse 分页响应元数据
+message PaginationResponse {
+  int32 page = 1;        // 当前页码
+  int32 limit = 2;       // 每页数量
+  int64 total = 3;       // 总记录数
+  int32 total_pages = 4; // 总页数
+}
+
+// Empty 通用空响应（用于删除等操作）
+message Empty {}
+
+// IDRequest 通用 ID 查询请求
+message IDRequest {
+  string id = 1;
+}
