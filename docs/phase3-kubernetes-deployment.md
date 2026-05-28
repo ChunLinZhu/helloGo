@@ -1,3398 +1,1288 @@
-# 第三阶段开发计划：Kubernetes 部署
+# 第三阶段开发计划：Kubernetes 部署（minikube + Helm + Lens）
 
-> 基于第二阶段 gRPC 微服务架构，从 Docker Compose 本地部署进阶到 Kubernetes 生产级部署  
-> 面向 Go 初学者设计，逐步掌握容器编排、服务治理与生产化运维
+> 基于第二阶段 gRPC 微服务架构，部署到本地 minikube 集群  
+> 使用 Helm 管理 K8s 资源，Lens 可视化控制容器，front-end 提供 Web UI  
+> 面向 Go 初学者设计，侧重动手实操
 
 ---
 
 ## 目录
 
-- [0. 学习路线图](#0-学习路线图)
-- [1. Kubernetes 基础入门](#1-kubernetes-基础入门)
-- [2. 架构演进：Compose → K8s](#2-架构演进compose--k8s)
-- [3. 应用层改造](#3-应用层改造)
-- [4. Dockerfile 生产化](#4-dockerfile-生产化)
-- [5. K8s 资源清单（基础篇）](#5-k8s-资源清单基础篇)
-- [6. 配置管理与密钥](#6-配置管理与密钥)
-- [7. 服务发现：etcd → K8s DNS](#7-服务发现etcd--k8s-dns)
-- [8. 入口与流量管理](#8-入口与流量管理)
-- [9. 持久化存储](#9-持久化存储)
-- [10. Helm Chart 打包](#10-helm-chart-打包)
-- [11. CI/CD 流水线](#11-cicd-流水线)
-- [12. 可观测性（K8s 原生方案）](#12-可观测性k8s-原生方案)
-- [13. 生产加固](#13-生产加固)
-- [14. 多环境策略](#14-多环境策略)
-- [15. 阶段总结与时间规划](#15-阶段总结与时间规划)
+- [0. 总体架构](#0-总体架构)
+- [1. 环境准备](#1-环境准备)
+- [2. 应用层改造](#2-应用层改造)
+- [3. Dockerfile](#3-dockerfile)
+- [4. Helm Chart](#4-helm-chart)
+- [5. 部署与验证](#5-部署与验证)
+- [6. Lens 可视化管理](#6-lens-可视化管理)
+- [7. 日常运维操作](#7-日常运维操作)
+- [8. Makefile 目标](#8-makefile-目标)
+- [9. 常见问题排查](#9-常见问题排查)
 
 ---
 
-## 0. 学习路线图
-
-> 第二阶段用 Docker Compose 在单机上运行全部微服务。第三阶段的目标是把这套服务部署到 K8s 集群，  
-> 获得自动扩缩容、滚动更新、自愈、配置管理等生产级能力。
+## 0. 总体架构
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Kubernetes 部署学习路线                           │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Milestone 1: 理解 K8s 核心概念                                      │
-│  ├── Pod / Deployment / Service / ConfigMap / Secret                 │
-│  ├── kubectl 基本操作                                                │
-│  ├── 本地集群：minikube / kind / k3d                                 │
-│  └── 动手：在 minikube 上部署一个 Nginx Pod                         │
-│                                                                      │
-│  Milestone 2: 应用改造                                               │
-│  ├── 健康检查探针（Liveness / Readiness / Startup）                   │
-│  ├── 优雅停机（PreStop hook + signal 处理）                          │
-│  ├── 配置外部化（环境变量 → ConfigMap / Secret）                     │
-│  ├── Dockerfile 安全加固（非 root、只读文件系统）                    │
-│  └── 动手：改造 User Service 并在 K8s 上运行                        │
-│                                                                      │
-│  Milestone 3: 完整部署                                               │
-│  ├── 编写全部微服务的 K8s 清单（Manifests）                          │
-│  ├── 服务发现从 etcd 迁移到 K8s DNS                                  │
-│  ├── Ingress 配置 HTTP 入口                                          │
-│  ├── ConfigMap / Secret 管理配置                                     │
-│  └── 动手：kubectl apply 一键部署全部服务                            │
-│                                                                      │
-│  Milestone 4: Helm + CI/CD                                           │
-│  ├── 用 Helm Chart 模板化 K8s 清单                                   │
-│  ├── GitHub Actions 自动构建镜像 + 推送                              │
-│  ├── 自动部署到 K8s 集群                                             │
-│  └── 动手：提交代码后自动部署到 dev 环境                             │
-│                                                                      │
-│  Milestone 5: 生产化                                                 │
-│  ├── HPA 自动扩缩容                                                 │
-│  ├── NetworkPolicy 网络隔离                                          │
-│  ├── PodDisruptionBudget 保障可用性                                  │
-│  ├── Prometheus + Grafana 监控                                       │
-│  └── 动手：压测触发自动扩容 + 查看 Grafana 面板                     │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        minikube 集群                             │
+│                                                                  │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
+│  │  Frontend    │    │   Gateway    │    │    MySQL     │       │
+│  │  (nginx)     │    │  (Fiber)     │    │  (StatefulSet)│      │
+│  │  :30090      │    │  :30080      │    │  :3306       │       │
+│  │  NodePort    │    │  NodePort    │    │  ClusterIP   │       │
+│  └──────────────┘    └──────┬───────┘    └──────────────┘       │
+│                             │ gRPC                               │
+│         ┌───────────────────┼───────────────────┐               │
+│         ▼                   ▼                   ▼               │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐        │
+│  │ User Service │   │ Auth Service │   │ Perm Service │        │
+│  │   :50001     │   │   :50002     │   │   :50003     │        │
+│  │  ClusterIP   │   │  ClusterIP   │   │  ClusterIP   │        │
+│  └──────────────┘   └──────────────┘   └──────────────┘        │
+│         │                                                        │
+│  ┌──────────────┐   ┌──────────────┐                           │
+│  │  Biz Service │   │    Redis     │                           │
+│  │   :50004     │   │  (StatefulSet)│                          │
+│  │  ClusterIP   │   │   :6379      │                           │
+│  └──────────────┘   └──────────────┘                           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+         ▲                           ▲
+         │ HTTP                      │ HTTP
+         │                           │
+    ┌────┴─────┐               ┌─────┴────┐
+    │  浏览器  │               │   Lens   │
+    │ 前端界面 │               │ K8s GUI  │
+    └──────────┘               └──────────┘
 ```
 
-### 前置条件
+**访问方式：**
 
-| 条件 | 说明 |
-|------|------|
-| 完成第二阶段 | gRPC 微服务 + Docker Compose 能正常运行 |
-| Docker 基础 | 理解 Dockerfile、镜像、容器 |
-| Linux 基础 | 熟悉命令行、网络、存储基本概念 |
-| Go 开发环境 | Go 1.23+、kubectl、helm、minikube/kind |
-
-### 推荐学习资源
-
-| 资源 | 链接 | 说明 |
-|------|------|------|
-| K8s 官方文档 | https://kubernetes.io/zh-cn/docs/ | 中文文档，概念详解 |
-| K8s 交互式教程 | https://kubernetes.io/docs/tutorials/ | 浏览器内实操 |
-| Helm 官方文档 | https://helm.sh/docs/ | Chart 开发指南 |
-| Kubernetes the Hard Way | https://github.com/kelseyhightower/kubernetes-the-hard-way | 深入理解 K8s 原理 |
-| 12-Factor App | https://12factor.net/zh_cn/ | 云原生应用方法论 |
+| 服务 | K8s 内部地址 | 外部访问地址 |
+|------|-------------|-------------|
+| 前端 | `frontend:80` | `http://$(minikube ip):30090` |
+| Gateway | `gateway:8000` | `http://$(minikube ip):30080` |
+| User Service | `user-service:50001` | 仅集群内 |
+| Auth Service | `auth-service:50002` | 仅集群内 |
+| Permission Service | `permission-service:50003` | 仅集群内 |
+| Biz Service | `biz-service:50004` | 仅集群内 |
+| MySQL | `mysql:3306` | 仅集群内 |
+| Redis | `redis:6379` | 仅集群内 |
 
 ---
 
-## 1. Kubernetes 基础入门
+## 1. 环境准备
 
-### 1.1 为什么需要 K8s？
-
-> 第二阶段用 Docker Compose 可以在单机上运行全部服务，但在生产环境中会遇到很多问题：
-
-| 问题 | Docker Compose | Kubernetes |
-|------|---------------|------------|
-| 单机故障 | 全部服务宕机 | 自动在其他节点重新调度 |
-| 流量突增 | 手动扩缩容 | HPA 自动扩缩 |
-| 滚动更新 | 需要手动编排 | 内置滚动更新策略 |
-| 多环境部署 | 复制多份 compose 文件 | Kustomize / Helm values |
-| 配置管理 | 环境变量硬编码 | ConfigMap + Secret |
-| 服务发现 | 需要 etcd 等外部组件 | 内置 DNS |
-| 健康检查 | 简单重启 | Liveness / Readiness / Startup 探针 |
-| 负载均衡 | 简单端口映射 | Service + Ingress |
-
-### 1.2 核心概念速览
-
-```
-Kubernetes 集群
-├── Control Plane（控制面）
-│   ├── API Server          — 所有操作的入口（REST API）
-│   ├── etcd                — 集群状态存储（K8s 自己的 etcd，不是我们的服务发现）
-│   ├── Scheduler           — 决定 Pod 运行在哪个 Node
-│   └── Controller Manager  — 维持期望状态（如 Deployment 副本数）
-│
-└── Worker Nodes（工作节点）
-    ├── kubelet             — 管理 Pod 生命周期
-    ├── kube-proxy          — 实现 Service 负载均衡
-    └── Container Runtime   — 运行容器（containerd / CRI-O）
-
-核心资源对象：
-┌─────────────┬────────────────────────────────────────────┐
-│ 资源         │ 作用                                       │
-├─────────────┼────────────────────────────────────────────┤
-│ Pod         │ 最小调度单元，包含 1+ 个容器                │
-│ Deployment  │ 管理 Pod 副本数、滚动更新、回滚             │
-│ Service     │ 为一组 Pod 提供稳定的 IP + DNS 名称          │
-│ ConfigMap   │ 存储非敏感配置（键值对 / 文件）             │
-│ Secret      │ 存储敏感数据（密码 / Token / 证书）         │
-│ Ingress     │ HTTP 路由规则，将外部流量引入集群          │
-│ PVC         │ 持久化存储声明                              │
-│ HPA         │ 根据指标自动调整 Pod 副本数                 │
-│ Namespace   │ 逻辑隔离（类似文件夹）                      │
-└─────────────┴────────────────────────────────────────────┘
-```
-
-### 1.3 本地开发环境搭建
-
-> 在本地跑 K8s 集群，推荐以下工具（选一个即可）：
-
-| 工具 | 平台 | 说明 |
-|------|------|------|
-| **minikube** | Linux / macOS / Windows | 最成熟，支持多种驱动（Docker / VirtualBox / KVM） |
-| **kind** | 全平台 | 用 Docker 容器模拟 K8s 节点，启动快 |
-| **k3d** | 全平台 | 在 Docker 中运行 k3s，轻量级 |
-| **Docker Desktop** | macOS / Windows | 内置 K8s，一键开启 |
-
-**使用 minikube（推荐）：**
+### 1.1 安装 minikube
 
 ```bash
-# 安装 minikube（Ubuntu）
+# Ubuntu
 curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
 sudo install minikube-linux-amd64 /usr/local/bin/minikube
 
-# 安装 kubectl
-sudo apt install kubectl
-# 或
+# 启动集群（Docker 驱动，分配足够资源）
+minikube start \
+  --driver=docker \
+  --cpus=4 \
+  --memory=8192 \
+  --disk-size=40g \
+  --kubernetes-version=v1.30.0
+
+# 验证
+minikube status
+kubectl cluster-info
+kubectl get nodes
+```
+
+### 1.2 安装 kubectl
+
+```bash
+# minikube 自带 kubectl，也可单独安装
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 sudo install kubectl /usr/local/bin/kubectl
 
-# 启动集群（使用 Docker 驱动）
-minikube start --driver=docker --cpus=4 --memory=8192
+# 启用自动补全（推荐）
+echo 'source <(kubectl completion bash)' >> ~/.bashrc
+echo 'alias k=kubectl' >> ~/.bashrc
+echo 'complete -o default -F __start_kubectl k' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### 1.3 安装 Helm
+
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 # 验证
-kubectl cluster-info
-kubectl get nodes
-# NAME       STATUS   ROLES           AGE   VERSION
-# minikube   Ready    control-plane   30s   v1.29.0
-
-# 开启辅助工具
-minikube addons enable ingress
-minikube addons enable metrics-server
-minikube addons enable dashboard
+helm version
 ```
 
-**使用 kind（轻量替代）：**
+### 1.4 安装 Lens（桌面 GUI）
 
 ```bash
-# 安装 kind
-go install sigs.k8s.io/kind@latest
+# 方式一：官网下载 AppImage
+# https://k8slens.dev/ → 下载 Linux AppImage
+chmod +x Lens-*.AppImage
+./Lens-*.AppImage
 
-# 创建多节点集群（模拟真实环境）
-cat > kind-config.yaml << 'EOF'
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-  - role: control-plane
-    kubeadmConfigPatches:
-      - |
-        kind: InitConfiguration
-        nodeRegistration:
-          kubeletExtraArgs:
-            node-labels: "ingress-ready=true"
-    extraPortMappings:
-      - containerPort: 80
-        hostPort: 80
-      - containerPort: 443
-        hostPort: 443
-  - role: worker
-  - role: worker
-EOF
-
-kind create cluster --name hellogo --config kind-config.yaml
+# 方式二：Snap
+sudo snap install kontena-lens --classic
 ```
 
-### 1.4 kubectl 常用命令
+Lens 打开后会自动检测 minikube 集群，点击连接即可。
+
+### 1.5 配置 minikube Docker 环境
 
 ```bash
-# ===== 查看资源 =====
-kubectl get pods                    # 查看 Pod
-kubectl get pods -o wide            # 更多信息（IP、Node）
-kubectl get deployments             # 查看 Deployment
-kubectl get services                # 查看 Service
-kubectl get all                     # 查看全部资源
-kubectl get events --sort-by=.metadata.creationTimestamp  # 查看事件
+# 使用 minikube 内置的 Docker daemon 构建镜像
+# 这样不需要推送到远程 registry
+eval $(minikube docker-env)
 
-# ===== 描述与调试 =====
-kubectl describe pod <pod-name>     # 查看 Pod 详情（事件、状态）
-kubectl logs <pod-name>             # 查看日志
-kubectl logs -f <pod-name>          # 实时跟踪日志
-kubectl logs <pod-name> --previous  # 查看上一次崩溃的日志
-kubectl exec -it <pod-name> -- sh   # 进入容器
-
-# ===== 部署与管理 =====
-kubectl apply -f deployment.yaml    # 创建/更新资源
-kubectl delete -f deployment.yaml   # 删除资源
-kubectl rollout status deployment/<name>    # 查看滚动更新状态
-kubectl rollout undo deployment/<name>      # 回滚到上一版本
-kubectl scale deployment/<name> --replicas=5  # 手动扩缩容
-
-# ===== 端口转发（调试用） =====
-kubectl port-forward svc/gateway 8000:8000  # 本地 8000 → 集群 gateway:8000
+# 验证
+docker ps  # 应能看到 minikube 系统容器
 ```
 
-### 1.5 动手练习
-
-| # | 练习 | 目标 |
-|---|------|------|
-| 1 | `minikube start` 启动本地集群 | 搭建 K8s 开发环境 |
-| 2 | `kubectl run nginx --image=nginx` 并查看 Pod 状态 | 理解 Pod 生命周期 |
-| 3 | 创建 Deployment + Service，通过 port-forward 访问 | 理解 Deployment 和 Service |
-| 4 | 修改 Deployment 镜像版本，观察滚动更新过程 | 理解滚动更新策略 |
-| 5 | 删除一个 Pod，观察自动重建 | 理解自愈机制 |
+> **注意**：每次新开终端都需要重新执行 `eval $(minikube docker-env)`
 
 ---
 
-## 2. 架构演进：Compose → K8s
+## 2. 应用层改造
 
-### 2.1 第二阶段架构回顾（Docker Compose）
+### 2.1 健康检查端点（所有微服务）
 
-```
-┌─────────────────────────────────────────────────────┐
-│                Docker Compose 单机                   │
-│                                                      │
-│  ┌──────────┐                                       │
-│  │ Gateway  │ :8000  ← curl / 浏览器               │
-│  └────┬─────┘                                       │
-│       │ gRPC                                         │
-│  ┌────┴─────────────────────────┐                   │
-│  │  ┌──────┐ ┌──────┐ ┌──────┐ │                   │
-│  │  │ User │ │ Auth │ │ Perm │ │ Biz │              │
-│  │  │:50001│ │:50002│ │:50003│ │:50004│             │
-│  │  └──┬───┘ └──┬───┘ └──┬───┘ └──┬───┘             │
-│  └─────┼────────┼────────┼────────┼─────┘           │
-│        ▼        ▼        ▼        ▼                  │
-│  ┌──────┐ ┌──────┐ ┌──────┐ ┌────────┐             │
-│  │MySQL │ │Redis │ │ etcd │ │ Jaeger │              │
-│  └──────┘ └──────┘ └──────┘ └────────┘              │
-└─────────────────────────────────────────────────────┘
-
-问题：
-✗ 单点故障（一台机器挂了全部挂）
-✗ 无法水平扩展
-✗ 没有自动扩缩容
-✗ 更新需要手动编排
-✗ 服务发现依赖 etcd（额外运维）
-```
-
-### 2.2 第三阶段目标架构（Kubernetes）
-
-```
-                          ┌─────────────┐
-                          │   Client    │
-                          │ (浏览器/App) │
-                          └──────┬──────┘
-                                 │ HTTPS
-                                 ▼
-                    ┌────────────────────────┐
-                    │      Ingress           │  ← TLS 终止、路由规则
-                    │  (Nginx / Traefik)     │
-                    └────────────┬───────────┘
-                                 │
-                    ┌────────────┴───────────┐
-                    │   Gateway Service      │  ← ClusterIP + 负载均衡
-                    │   (Fiber HTTP)         │
-                    │   Deployment: 2+ Pod   │
-                    └───┬───────┬──────┬─────┘
-                        │       │      │  gRPC (K8s DNS 服务发现)
-              ┌─────────┘       │      └─────────┐
-              ▼                 ▼                 ▼
-     ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-     │ User Service │ │ Auth Service │ │  Biz Service │ ...
-     │ Deployment   │ │ Deployment   │ │  Deployment  │
-     │ 2+ Pod       │ │ 2+ Pod       │ │  2+ Pod      │
-     │ HPA: 2~10    │ │ HPA: 2~5     │ │  HPA: 2~5    │
-     └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-            │                 │                 │
-            ▼                 ▼                 ▼
-     ┌──────────────────────────────────────────────────┐
-     │                  K8s 内置能力                      │
-     │  ┌────────┐ ┌──────────┐ ┌──────────┐            │
-     │  │ DNS    │ │ConfigMap │ │ Secret   │            │
-     │  │(服务发现)│ │(配置管理) │ │(密钥管理) │           │
-     │  └────────┘ └──────────┘ └──────────┘            │
-     └──────────────────────────────────────────────────┘
-            │                 │
-            ▼                 ▼
-     ┌──────────────────────────────────────────────────┐
-     │              外部基础设施（托管服务）               │
-     │  ┌──────────────┐  ┌──────────────┐              │
-     │  │ Cloud SQL    │  │ ElastiCache  │              │
-     │  │ (MySQL 托管)  │  │ (Redis 托管)  │             │
-     │  └──────────────┘  └──────────────┘              │
-     │  ┌──────────────┐  ┌──────────────┐              │
-     │  │ Prometheus   │  │ Grafana      │              │
-     │  │ (监控)        │  │ (面板)        │             │
-     │  └──────────────┘  └──────────────┘              │
-     └──────────────────────────────────────────────────┘
-
-优势：
-✓ 高可用（Pod 故障自动重建）
-✓ 自动扩缩容（HPA 根据 CPU/QPS 自动调整）
-✓ 滚动更新（零停机发布）
-✓ 服务发现用 K8s DNS（无需 etcd）
-✓ 配置与密钥统一管理
-✓ 网络隔离（NetworkPolicy）
-```
-
-### 2.3 关键变化对比
-
-| 维度 | 第二阶段（Compose） | 第三阶段（K8s） |
-|------|---------------------|-----------------|
-| 编排工具 | docker-compose | kubectl + Helm |
-| 服务发现 | etcd + TTL 注册 | K8s 内置 DNS |
-| 负载均衡 | Docker 端口映射 | Service (ClusterIP) |
-| 配置管理 | 环境变量 | ConfigMap + Secret |
-| 健康检查 | 无 / 简单 restart | Liveness + Readiness + Startup 探针 |
-| 存储 | Docker named volume | PVC + StorageClass |
-| 扩缩容 | 手动 | HPA 自动扩缩 |
-| 网络 | Docker bridge 网络 | CNI + NetworkPolicy |
-| TLS | 无 / 手动证书 | cert-manager 自动签发 |
-| 日志 | docker compose logs | 容器 stdout → 日志收集 |
-| 监控 | Prometheus（手动配置） | Prometheus Operator + Grafana |
-| CI/CD | 无 | GitHub Actions → 镜像构建 → 自动部署 |
-| 多环境 | 多份 compose 文件 | Kustomize / Helm values |
-
-### 2.4 项目目录结构（新增部分）
-
-```
-helloGo/
-├── ...（Phase 1 & 2 的代码保持不变）
-│
-├── deploy/                              # 第三阶段新增
-│   ├── k8s/                             # K8s 原生清单
-│   │   ├── base/                        # Kustomize base（各环境共享）
-│   │   │   ├── namespace.yaml
-│   │   │   ├── configmap.yaml
-│   │   │   ├── secret.yaml
-│   │   │   ├── gateway/
-│   │   │   │   ├── deployment.yaml
-│   │   │   │   ├── service.yaml
-│   │   │   │   └── kustomization.yaml
-│   │   │   ├── user-service/
-│   │   │   │   ├── deployment.yaml
-│   │   │   │   ├── service.yaml
-│   │   │   │   └── kustomization.yaml
-│   │   │   ├── auth-service/
-│   │   │   ├── permission-service/
-│   │   │   ├── biz-service/
-│   │   │   └── kustomization.yaml       # base 入口
-│   │   │
-│   │   └── overlays/                    # Kustomize overlays（各环境差异）
-│   │       ├── dev/
-│   │       │   ├── kustomization.yaml
-│   │       │   └── patches/
-│   │       │       └── replica-count.yaml
-│   │       ├── staging/
-│   │       │   ├── kustomization.yaml
-│   │       │   └── patches/
-│   │       └── production/
-│   │           ├── kustomization.yaml
-│   │           └── patches/
-│   │               ├── hpa.yaml
-│   │               └── resource-limits.yaml
-│   │
-│   ├── helm/                            # Helm Chart（推荐方式）
-│   │   └── hellogo/
-│   │       ├── Chart.yaml
-│   │       ├── values.yaml              # 默认值（dev 环境）
-│   │       ├── values-staging.yaml
-│   │       ├── values-production.yaml
-│   │       └── templates/
-│   │           ├── _helpers.tpl
-│   │           ├── namespace.yaml
-│   │           ├── configmap.yaml
-│   │           ├── secret.yaml
-│   │           ├── gateway/
-│   │           │   ├── deployment.yaml
-│   │           │   ├── service.yaml
-│   │           │   ├── hpa.yaml
-│   │           │   └── ingress.yaml
-│   │           ├── user-service/
-│   │           │   ├── deployment.yaml
-│   │           │   ├── service.yaml
-│   │           │   └── hpa.yaml
-│   │           ├── auth-service/
-│   │           ├── permission-service/
-│   │           ├── biz-service/
-│   │           ├── NOTES.txt
-│   │           └── tests/
-│   │               └── test-connection.yaml
-│   │
-│   └── docker/                          # Docker 相关文件
-│       ├── Dockerfile                   # 多阶段构建（复用 Phase 2 并改进）
-│       └── .dockerignore
-│
-├── .github/                             # CI/CD
-│   └── workflows/
-│       ├── ci.yml                       # 测试 + 构建
-│       ├── cd-dev.yml                   # 自动部署到 dev
-│       └── cd-production.yml            # 手动审批部署到 prod
-│
-└── scripts/
-    ├── k8s-deploy.sh                    # K8s 部署脚本
-    ├── k8s-rollback.sh                  # 回滚脚本
-    └── k8s-health-check.sh             # 健康检查脚本
-```
-
----
-
-## 3. 应用层改造
-
-> 在把应用部署到 K8s 之前，需要先改造应用本身，让它"K8s-friendly"。
-
-### 3.1 健康检查探针
-
-> K8s 通过探针（Probe）判断 Pod 的状态，决定是否需要重启或将流量路由到该 Pod。  
-> 三种探针缺一不可：
-
-```
-┌───────────────────────────────────────────────────────────┐
-│                    K8s 探针机制                             │
-├─────────────────┬─────────────────────────────────────────┤
-│ StartupProbe    │ 应用启动慢时使用（如数据库迁移）         │
-│                 │ 成功之前，Liveness/Readiness 不会启动    │
-│                 │ 防止启动慢的应用被反复杀死               │
-├─────────────────┼─────────────────────────────────────────┤
-│ LivenessProbe   │ 应用是否"活着"                          │
-│                 │ 失败 → K8s 重启 Pod（kill + restart）   │
-│                 │ 检测死锁、无限循环等不可恢复错误         │
-├─────────────────┼─────────────────────────────────────────┤
-│ ReadinessProbe  │ 应用是否"准备好接收流量"                │
-│                 │ 失败 → 从 Service Endpoints 中移除      │
-│                 │ 检测 DB 连接、缓存预热等暂时性问题       │
-└─────────────────┴─────────────────────────────────────────┘
-```
-
-**改造 gRPC 服务的健康检查端点：**
+每个 gRPC 微服务新增 HTTP 健康检查端口（8080），供 K8s 探针使用：
 
 ```go
 // internal/shared/health/health.go
-// 所有微服务共享的健康检查模块
-
 package health
 
 import (
-    "sync/atomic"
-
-    "github.com/gofiber/fiber/v2"
-    "gorm.io/gorm"
+    "net/http"
+    "go.uber.org/zap"
 )
 
-// Checker 健康检查器
-type Checker struct {
-    db      *gorm.DB
-    ready   atomic.Bool
-    started atomic.Bool
-}
+// StartHealthServer 启动健康检查 HTTP 服务
+// 端口 8080，提供 /healthz 和 /readyz
+func StartHealthServer(logger *zap.Logger, checks ...CheckFunc) {
+    mux := http.NewServeMux()
 
-func NewChecker(db *gorm.DB) *Checker {
-    return &Checker{db: db}
-}
-
-// SetReady 标记服务就绪（在启动完成后调用）
-func (c *Checker) SetReady(ready bool) {
-    c.ready.Store(ready)
-    c.started.Store(true)
-}
-
-// RegisterRoutes 注册健康检查路由（在 Fiber HTTP 端口上暴露）
-func (c *Checker) RegisterRoutes(app *fiber.App) {
-    health := app.Group("/healthz")
-
-    // 存活探针：应用进程是否存活
-    // 不依赖外部服务，只要进程在就返回 OK
-    // K8s 失败时会重启 Pod
-    health.Get("/liveness", func(ctx *fiber.Ctx) error {
-        return ctx.JSON(fiber.Map{
-            "status": "ok",
-        })
+    // /healthz — 存活探针（服务进程是否运行）
+    mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte("ok"))
     })
 
-    // 就绪探针：是否可以接收流量
-    // 检查 DB 连接 + Redis 连接
-    // K8s 失败时会从 Service Endpoints 移除该 Pod
-    health.Get("/readiness", func(ctx *fiber.Ctx) error {
-        if !c.ready.Load() {
-            return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-                "status": "not_ready",
-                "reason": "service is still initializing",
-            })
+    // /readyz — 就绪探针（依赖服务是否可用）
+    mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+        for _, check := range checks {
+            if err := check(); err != nil {
+                w.WriteHeader(http.StatusServiceUnavailable)
+                w.Write([]byte(err.Error()))
+                return
+            }
         }
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte("ok"))
+    })
 
-        // 检查数据库连接
-        sqlDB, err := c.db.DB()
+    go func() {
+        logger.Info("健康检查服务启动", zap.Int("port", 8080))
+        if err := http.ListenAndServe(":8080", mux); err != nil {
+            logger.Error("健康检查服务失败", zap.Error(err))
+        }
+    }()
+}
+
+// CheckFunc 健康检查函数类型
+type CheckFunc func() error
+
+// DBCheck 数据库连接检查
+func DBCheck(db interface{ DB() error }) CheckFunc {
+    return func() error {
+        sqlDB, err := db.DB()
         if err != nil {
-            return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-                "status":  "not_ready",
-                "reason":  "database connection failed",
-                "details": err.Error(),
-            })
+            return err
         }
-        if err := sqlDB.Ping(); err != nil {
-            return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-                "status":  "not_ready",
-                "reason":  "database ping failed",
-                "details": err.Error(),
-            })
-        }
+        return sqlDB.Ping()
+    }
+}
 
-        return ctx.JSON(fiber.Map{
-            "status": "ready",
-        })
-    })
-
-    // 启动探针：应用是否完成启动
-    // 用于启动慢的服务（如需要加载大量数据）
-    health.Get("/startup", func(ctx *fiber.Ctx) error {
-        if !c.started.Load() {
-            return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-                "status": "starting",
-            })
-        }
-        return ctx.JSON(fiber.Map{
-            "status": "started",
-        })
-    })
+// RedisCheck Redis 连接检查
+func RedisCheck(client interface{ Ping() error }) CheckFunc {
+    return func() error {
+        return client.Ping()
+    }
 }
 ```
 
-**在每个微服务的 main.go 中使用：**
+各微服务 main.go 中启动：
 
 ```go
 // cmd/user/main.go
-func main() {
-    // ... 初始化 DB、Redis、gRPC Server ...
-
-    // 创建健康检查器
-    checker := health.NewChecker(db)
-
-    // Fiber HTTP Server（健康检查 + 指标暴露）
-    httpApp := fiber.New()
-    checker.RegisterRoutes(httpApp)
-
-    // Prometheus 指标端点
-    httpApp.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
-
-    // 启动 HTTP Server（健康检查端口，默认 8080）
-    go httpApp.Listen(":8080")
-
-    // 启动 gRPC Server
-    go func() {
-        lis, _ := net.Listen("tcp", ":50001")
-        grpcServer.Serve(lis)
-    }()
-
-    // 标记服务就绪
-    checker.SetReady(true)
-    logger.Info("User Service 已就绪，开始接收流量")
-
-    // 等待退出信号
-    quit := make(chan os.Signal, 1)
-    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-    <-quit
-
-    // 优雅停机（详见 3.2）
-    checker.SetReady(false)
-    gracefulShutdown(grpcServer, httpApp)
-}
-```
-
-### 3.2 优雅停机
-
-> K8s 在终止 Pod 时会发送 SIGTERM 信号，默认等待 30 秒（`terminationGracePeriodSeconds`）。  
-> 应用需要在这段时间内完成：停止接收新请求 → 处理完已有请求 → 关闭连接。
-
-```go
-// internal/shared/shutdown/shutdown.go
-
-package shutdown
-
-import (
-    "context"
-    "time"
-
-    "github.com/gofiber/fiber/v2"
-    "go.uber.org/zap"
-    "google.golang.org/grpc"
-    "google.golang.org/grpc/health"
+health.StartHealthServer(log,
+    health.DBCheck(db),
+    // 无 Redis 依赖则省略
 )
-
-// GracefulShutdown 优雅关闭所有服务
-func GracefulShutdown(
-    logger *zap.Logger,
-    grpcServer *grpc.Server,
-    httpApp *fiber.App,
-    healthServer *health.Server,
-    timeout time.Duration,
-) {
-    logger.Info("收到终止信号，开始优雅停机...")
-
-    // 1. 立即标记不健康（从 K8s Service Endpoints 中移除）
-    //    这样新的流量不会再路由到这个 Pod
-    healthServer.SetServingStatus("", healthpb2.HealthCheckResponse_NOT_SERVING)
-
-    // 2. 等待一小段时间，让 K8s 更新 Endpoints
-    //    因为 Endpoints 更新有延迟，直接关闭可能会丢失少量请求
-    logger.Info("等待 K8s Endpoints 更新...")
-    time.Sleep(5 * time.Second)
-
-    // 3. 停止 gRPC Server（GracefulStop 会等待已有请求处理完）
-    logger.Info("停止 gRPC Server（等待已有请求完成）...")
-    done := make(chan struct{})
-    go func() {
-        grpcServer.GracefulStop()
-        close(done)
-    }()
-
-    // 4. 停止 HTTP Server
-    shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
-    defer cancel()
-    if err := httpApp.ShutdownWithContext(shutdownCtx); err != nil {
-        logger.Error("HTTP Server 关闭出错", zap.Error(err))
-    }
-
-    // 5. 等待 gRPC 关闭（最多等 timeout）
-    select {
-    case <-done:
-        logger.Info("gRPC Server 已优雅关闭")
-    case <-shutdownCtx.Done():
-        logger.Warn("gRPC Server 关闭超时，强制关闭")
-        grpcServer.Stop()
-    }
-
-    logger.Info("所有服务已关闭")
-}
 ```
 
-**在 Deployment 中配合 PreStop Hook：**
+### 2.2 服务发现：K8s DNS 替代硬编码地址
+
+在 K8s 中，服务间调用使用 K8s DNS 名称：
+
+```
+# 命名空间内：{service-name}:{port}
+user-service:50001
+auth-service:50002
+permission-service:50003
+biz-service:50004
+
+# 跨命名空间：{service-name}.{namespace}:{port}
+user-service.hellogo.svc.cluster.local:50001
+```
+
+**无需修改代码**，通过 Helm values.yaml 配置环境变量即可：
 
 ```yaml
-# K8s 终止 Pod 的流程：
-# 1. Pod 标记为 Terminating
-# 2. 同时执行：
-#    a. PreStop Hook（如果配置了的话）
-#    b. kube-proxy 更新 iptables 规则（不再转发新流量）
-# 3. PreStop 完成后，发送 SIGTERM
-# 4. 等待 terminationGracePeriodSeconds（默认 30s）
-# 5. 超时则发送 SIGKILL 强杀
-
-# PreStop Hook 的作用：
-# 在 SIGTERM 之前先等几秒，让 kube-proxy 有时间更新路由规则
-# 否则 SIGTERM 和路由更新是并行的，可能会丢失少量请求
+# values.yaml
+services:
+  user:
+    addr: "user-service:50001"
+  auth:
+    addr: "auth-service:50002"
+  permission:
+    addr: "permission-service:50003"
+  biz:
+    addr: "biz-service:50004"
 ```
 
-### 3.3 配置外部化
+通过 ConfigMap 注入为环境变量，服务启动时自动读取。
 
-> 遵循 12-Factor App 原则：配置从环境变量注入，不硬编码在代码中。  
-> 在 K8s 中，环境变量来自 ConfigMap 和 Secret。
+### 2.3 优雅停机
 
-**改造配置加载逻辑（兼容本地开发 + K8s）：**
+所有微服务 main.go 添加信号监听：
 
 ```go
-// internal/shared/config/config.go
-// 改造后的配置加载，复用 Phase 1 的嵌套结构体风格
-// 优先级：环境变量 > .env 文件 > 默认值
+// 优雅停机
+quit := make(chan os.Signal, 1)
+signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-package config
+go func() {
+    <-quit
+    log.Info("收到停机信号，开始优雅停机...")
 
-import (
-    "fmt"
+    // 1. 停止接收新请求（gRPC GracefulStop）
+    grpcServer.GracefulStop()
 
-    "github.com/spf13/viper"
-)
+    // 2. 关闭数据库连接
+    sqlDB, _ := db.DB()
+    sqlDB.Close()
 
-type Config struct {
-    App      AppConfig      `mapstructure:",squash"`
-    Database DatabaseConfig `mapstructure:",squash"`
-    Redis    RedisConfig    `mapstructure:",squash"`
-    JWT      JWTConfig      `mapstructure:",squash"`
-    Security SecurityConfig `mapstructure:",squash"`
-    Login    LoginConfig    `mapstructure:",squash"`
-    Upload   UploadConfig   `mapstructure:",squash"`
+    // 3. 关闭 Redis
+    redisClient.Close()
 
-    // 服务发现（Phase 2 新增）
-    // K8s 环境下使用 DNS 地址，不需要 etcd
-    ServiceDiscovery string `mapstructure:"SERVICE_DISCOVERY"` // "etcd" 或 "dns"
-    EtcdEndpoints    string `mapstructure:"ETCD_ENDPOINTS"`
-
-    // 下游服务地址（K8s DNS 格式：service-name.namespace.svc.cluster.local）
-    UserServiceAddr       string `mapstructure:"USER_SERVICE_ADDR"`
-    AuthServiceAddr       string `mapstructure:"AUTH_SERVICE_ADDR"`
-    PermissionServiceAddr string `mapstructure:"PERMISSION_SERVICE_ADDR"`
-    BizServiceAddr        string `mapstructure:"BIZ_SERVICE_ADDR"`
-
-    // 可观测性
-    OtelEnabled    bool   `mapstructure:"OTEL_ENABLED"`
-    OtelEndpoint   string `mapstructure:"OTEL_ENDPOINT"`
-    MetricsEnabled bool   `mapstructure:"ENABLE_METRICS"`
-}
-
-type AppConfig struct {
-    Env  string `mapstructure:"APP_ENV"`
-    Port int    `mapstructure:"PORT"`       // Gateway HTTP 端口
-}
-
-type DatabaseConfig struct {
-    Type     string `mapstructure:"DB_TYPE"`
-    MySQL    MySQLConfig
-    Postgres PostgresConfig
-    SQLite   SQLiteConfig
-}
-
-type MySQLConfig struct {
-    Host     string `mapstructure:"DB_HOST"`
-    Port     int    `mapstructure:"DB_PORT"`
-    User     string `mapstructure:"DB_USER"`
-    Password string `mapstructure:"DB_PASS"`
-    Name     string `mapstructure:"DB_NAME"`
-}
-
-type PostgresConfig struct {
-    Host     string `mapstructure:"PG_HOST"`
-    Port     int    `mapstructure:"PG_PORT"`
-    User     string `mapstructure:"PG_USER"`
-    Password string `mapstructure:"PG_PASS"`
-    Name     string `mapstructure:"PG_DB"`
-}
-
-type SQLiteConfig struct {
-    Path string `mapstructure:"SQLITE_PATH"`
-}
-
-type RedisConfig struct {
-    Host     string `mapstructure:"REDIS_HOST"`
-    Port     int    `mapstructure:"REDIS_PORT"`
-    Password string `mapstructure:"REDIS_PASS"`
-}
-
-type JWTConfig struct {
-    Secret         string `mapstructure:"JWT_SECRET"`
-    Expires        string `mapstructure:"JWT_EXPIRES"`         // "1d", "2h" 等
-    RefreshExpires string `mapstructure:"JWT_REFRESH_EXPIRES"` // "7d" 等
-}
-
-type SecurityConfig struct {
-    CSRFEnabled bool   `mapstructure:"CSRF_ENABLED"`
-    CSRFMode    string `mapstructure:"CSRF_MODE"`
-    CSRFSecret  string `mapstructure:"CSRF_SECRET"`
-    CORSOrigins string `mapstructure:"CORS_ORIGINS"`
-}
-
-type LoginConfig struct {
-    MaxFails int `mapstructure:"LOGIN_MAX_FAILS"`
-    LockTTL  int `mapstructure:"LOGIN_LOCK_TTL"`
-}
-
-type UploadConfig struct {
-    Dest            string `mapstructure:"UPLOAD_DEST"`
-    MaxSize         int    `mapstructure:"UPLOAD_MAX_SIZE"`
-    AllowedTypes    string `mapstructure:"UPLOAD_ALLOWED_TYPES"`
-    CleanInterval   int    `mapstructure:"UPLOAD_CLEAN_INTERVAL_SEC"`
-    TTLDays         int    `mapstructure:"UPLOAD_TTL_DAYS"`
-}
-
-func Load() (*Config, error) {
-    v := viper.New()
-    v.SetConfigName(".env")
-    v.SetConfigType("env")
-    v.AddConfigPath(".")
-    v.AddConfigPath("./configs")
-
-    // 自动绑定环境变量（K8s ConfigMap/Secret 注入的环境变量）
-    v.AutomaticEnv()
-
-    // 设置默认值
-    v.SetDefault("APP_ENV", "development")
-    v.SetDefault("PORT", 8000)
-    v.SetDefault("DB_TYPE", "sqlite")
-    v.SetDefault("SERVICE_DISCOVERY", "dns")   // K8s 默认用 DNS
-    v.SetDefault("OTEL_ENABLED", false)
-    v.SetDefault("ENABLE_METRICS", true)
-
-    // 尝试读取 .env 文件（本地开发用，K8s 中不存在该文件）
-    _ = v.ReadInConfig()
-
-    var cfg Config
-    if err := v.Unmarshal(&cfg); err != nil {
-        return nil, err
-    }
-
-    return &cfg, nil
-}
+    log.Info("服务已安全停止")
+    os.Exit(0)
+}()
 ```
 
-### 3.4 服务发现的配置切换
+K8s 会在发送 SIGTERM 后等待 `terminationGracePeriodSeconds`（默认 30s），超时后强制 kill。
 
-```go
-// internal/shared/discovery/discovery.go
-// 支持两种服务发现模式：etcd（本地开发）和 dns（K8s 环境）
+### 2.4 配置外部化
 
-package discovery
+**数据库密码、JWT Secret 等敏感信息**通过 K8s Secret 管理：
 
-import (
-    "context"
-    "fmt"
-)
-
-// Discoverer 服务发现接口
-type Discoverer interface {
-    // Register 注册当前服务实例
-    Register(ctx context.Context, serviceName, addr string) error
-    // Deregister 注销当前服务实例
-    Deregister(ctx context.Context, serviceName, addr string) error
-    // Discover 获取服务实例地址列表
-    Discover(ctx context.Context, serviceName string) ([]string, error)
-    // GetAddr 获取单个服务地址（用于 gRPC 连接）
-    GetAddr(ctx context.Context, serviceName string) (string, error)
-}
-
-// NewDiscoverer 根据配置创建服务发现实现
-func NewDiscoverer(mode string, cfg *config.Config) (Discoverer, error) {
-    switch mode {
-    case "etcd":
-        // 第二阶段的方式：使用 etcd + TTL 注册
-        return NewEtcdDiscoverer(cfg.EtcdEndpoints)
-    case "dns":
-        // 第三阶段的方式：使用 K8s DNS
-        return NewDNSDiscoverer(), nil
-    default:
-        return nil, fmt.Errorf("unknown discovery mode: %s", mode)
-    }
-}
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hellogo-secrets
+type: Opaque
+stringData:
+  db-password: "root123456"
+  jwt-secret: "k8s-jwt-secret-change-in-prod"
+  redis-password: ""
 ```
 
-```go
-// internal/shared/discovery/dns.go
-// K8s DNS 服务发现
+**普通配置**通过 ConfigMap 管理：
 
-package discovery
-
-import (
-    "context"
-    "fmt"
-    "os"
-)
-
-// DNSDiscoverer 使用 K8s DNS 进行服务发现
-// 无需注册/注销，K8s Service 自动管理 DNS 记录
-type DNSDiscoverer struct {
-    namespace string
-}
-
-func NewDNSDiscoverer() *DNSDiscoverer {
-    // 从 K8s 自动注入的文件中读取 namespace
-    ns := "default"
-    if data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
-        ns = string(data)
-    }
-    return &DNSDiscoverer{namespace: ns}
-}
-
-// Register 在 DNS 模式下是空操作（K8s 自动管理）
-func (d *DNSDiscoverer) Register(_ context.Context, _, _ string) error {
-    return nil
-}
-
-// Deregister 在 DNS 模式下是空操作
-func (d *DNSDiscoverer) Deregister(_ context.Context, _, _ string) error {
-    return nil
-}
-
-// Discover 返回 K8s Service 的 DNS 地址
-// K8s 的 Service 会自动负载均衡到后端的 Pod
-func (d *DNSDiscoverer) Discover(_ context.Context, serviceName string) ([]string, error) {
-    addr := fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, d.namespace)
-    return []string{addr}, nil
-}
-
-// GetAddr 返回可直接用于 gRPC 连接的地址
-func (d *DNSDiscoverer) GetAddr(_ context.Context, serviceName string) (string, error) {
-    return fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, d.namespace), nil
-}
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hellogo-config
+data:
+  APP_ENV: "production"
+  DB_TYPE: "mysql"
+  DB_HOST: "mysql"
+  DB_PORT: "3306"
+  DB_NAME: "hellogo"
+  DB_USER: "root"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
 ```
-
-### 3.5 动手练习
-
-| # | 练习 | 目标 |
-|---|------|------|
-| 1 | 给 User Service 添加三个健康检查端点 | 理解探针的作用 |
-| 2 | 在 main.go 中实现优雅停机逻辑 | 理解 SIGTERM 处理流程 |
-| 3 | 改造配置加载，支持从环境变量注入所有配置 | 理解 12-Factor 配置原则 |
-| 4 | 实现 DNS 服务发现，替换 etcd | 理解 K8s DNS 服务发现 |
 
 ---
 
-## 4. Dockerfile 生产化
+## 3. Dockerfile
 
-> 第二阶段的 Dockerfile 可以用于 Compose 部署，但在 K8s 生产环境需要做安全加固。
-
-### 4.1 改进后的 Dockerfile
+### 3.1 后端微服务（统一 Dockerfile）
 
 ```dockerfile
-# deploy/docker/Dockerfile
-# 多阶段构建 + 安全加固
-# 用法: docker build --build-arg SERVICE=user -f deploy/docker/Dockerfile -t hellogo-user .
+# deploy/docker/Dockerfile.service
+# 多阶段构建：编译阶段 + 运行阶段
 
-ARG SERVICE
-ARG GO_VERSION=1.23
-ARG ALPINE_VERSION=3.20
+# ── 阶段一：编译 ──────────────────────────────────────────────
+FROM golang:1.23-alpine AS builder
 
-# ===== Stage 1: 构建 =====
-FROM golang:${GO_VERSION}-alpine AS builder
+ARG SERVICE_NAME=user
 
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache git gcc musl-dev
 
-WORKDIR /build
+WORKDIR /app
 
-# 先复制依赖文件，利用 Docker 缓存层
+# 先复制 go.mod/go.sum，利用 Docker 缓存
 COPY go.mod go.sum ./
 RUN go mod download
 
 # 复制源码并编译
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w -X main.version=$(git describe --tags --always)" \
-    -o /server ./cmd/${SERVICE}
+    go build -ldflags="-s -w" -o /app/server ./cmd/${SERVICE_NAME}/main.go
 
-# ===== Stage 2: 运行 =====
-FROM alpine:${ALPINE_VERSION}
+# ── 阶段二：运行 ──────────────────────────────────────────────
+FROM alpine:3.19
 
-# 安全加固：安装必要包
-RUN apk --no-cache add \
-    ca-certificates \
-    tzdata \
-    # curl 用于健康检查探针（K8s 也可以使用 exec 探针代替）
-    curl \
-    # 创建非 root 用户
-    && addgroup -S appgroup \
-    && adduser -S appuser -G appgroup -h /app
+RUN apk add --no-cache ca-certificates tzdata \
+    && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && adduser -D -u 1000 appuser
 
 WORKDIR /app
 
-# 复制二进制和配置
-COPY --from=builder /server .
-COPY --from=builder /build/configs ./configs
+# 从编译阶段复制二进制
+COPY --from=builder /app/server .
 
-# 安全加固：设置文件权限
-RUN chown -R appuser:appgroup /app
+# 复制配置文件（configs/ 目录）
+COPY configs/ ./configs/
 
-# 安全加固：切换到非 root 用户
+# 非 root 用户运行
 USER appuser
 
-# 健康检查端口（HTTP 探针端口）
-EXPOSE 8080
-# gRPC 端口（由 build arg 决定，这里只声明）
-EXPOSE 50001
-
-# 安全加固：声明健康检查
+# 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/healthz/liveness || exit 1
+    CMD wget -qO- http://localhost:8080/healthz || exit 1
 
-# 启动
+EXPOSE 50001 8080
+
 ENTRYPOINT ["./server"]
 ```
 
-### 4.2 Dockerfile 改进点对照
+### 3.2 前端（nginx 托管静态文件）
 
-| 维度 | Phase 2 Dockerfile | Phase 3 Dockerfile | 原因 |
-|------|--------------------|--------------------|------|
-| 基础镜像 | alpine:3.19 | alpine:3.20（可配置） | 使用更新的安全补丁 |
-| 用户 | root（默认） | appuser（非 root） | K8s PodSecurity 要求 |
-| 构建标记 | 无 | `-ldflags="-s -w"` | 减小二进制体积 |
-| 版本注入 | 无 | `-X main.version=` | 运行时可查版本 |
-| 健康检查 | 无 | HEALTHCHECK 指令 | Docker 级别的健康检查 |
-| 文件权限 | root 所有 | appuser 所有 | 安全最小权限原则 |
-| 时区 | 有 tzdata | 有 tzdata | 保持日志时间正确 |
-| 依赖缓存 | 全量 COPY | 先 go.mod 再 COPY 源码 | 利用 Docker layer cache |
+```dockerfile
+# deploy/docker/Dockerfile.frontend
 
-### 4.3 多架构构建（可选）
+# ── 阶段一：构建 ──────────────────────────────────────────────
+FROM node:20-alpine AS builder
 
-> 如果 K8s 节点有不同架构（如 ARM + AMD64），需要构建多架构镜像。
+WORKDIR /app
+
+COPY front-end/package.json front-end/package-lock.json ./
+RUN npm ci
+
+COPY front-end/ .
+
+# 构建时注入 API 地址（Vite 使用 import.meta.env）
+ARG VITE_API_URL=http://localhost:30080
+ENV VITE_API_URL=${VITE_API_URL}
+
+RUN npm run build
+
+# ── 阶段二：nginx ─────────────────────────────────────────────
+FROM nginx:1.27-alpine
+
+# 复制构建产物
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# nginx 配置（支持 SPA 路由）
+COPY deploy/docker/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+```
+
+nginx 配置：
+
+```nginx
+# deploy/docker/nginx.conf
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA 路由 fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 静态资源缓存
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+```
+
+### 3.3 构建脚本
 
 ```bash
-# 使用 docker buildx 构建多架构镜像
-docker buildx create --name hellogo-builder --use
+#!/bin/bash
+# deploy/docker/build.sh
 
-# 构建并推送多架构镜像
-docker buildx build \
-    --platform linux/amd64,linux/arm64 \
-    --build-arg SERVICE=user \
-    -t registry.example.com/hellogo-user:latest \
-    -t registry.example.com/hellogo-user:v1.0.0 \
-    --push \
-    -f deploy/docker/Dockerfile .
-```
+eval $(minikube docker-env)
 
-### 4.4 .dockerignore
+# 后端服务
+for svc in user auth permission biz gateway; do
+    echo "构建 ${svc} 镜像..."
+    docker build \
+        --build-arg SERVICE_NAME=${svc} \
+        -f deploy/docker/Dockerfile.service \
+        -t hellogo/${svc}:latest \
+        .
+done
 
-```
-# deploy/docker/.dockerignore
-.git
-.github
-.vscode
-.idea
-*.md
-docs/
-front-end/
-scripts/
-deploy/
-build/
-coverage/
-*.test
-*.out
-.env.*
-!.env.example
-docker-compose*.yml
-.air.toml
-Makefile
+# 前端
+echo "构建 frontend 镜像..."
+docker build \
+    --build-arg VITE_API_URL=http://$(minikube ip):30080 \
+    -f deploy/docker/Dockerfile.frontend \
+    -t hellogo/frontend:latest \
+    .
+
+echo "构建完成！"
+docker images | grep hellogo
 ```
 
 ---
 
-## 5. K8s 资源清单（基础篇）
+## 4. Helm Chart
 
-> 以下清单是部署 helloGo 微服务到 K8s 所需的核心资源。  
-> 先手写原生 YAML 理解概念，再用 Helm 模板化（§10）。
+### 4.1 Chart 目录结构
 
-### 5.1 Namespace（命名空间）
-
-```yaml
-# deploy/k8s/base/namespace.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: hellogo
-  labels:
-    app.kubernetes.io/name: hellogo
-    app.kubernetes.io/part-of: hellogo
+```
+deploy/helm/hellogo/
+├── Chart.yaml
+├── values.yaml
+├── templates/
+│   ├── _helpers.tpl
+│   ├── namespace.yaml
+│   ├── secrets.yaml
+│   ├── configmap.yaml
+│   ├── mysql/
+│   │   ├── statefulset.yaml
+│   │   ├── service.yaml
+│   │   └── pvc.yaml
+│   ├── redis/
+│   │   ├── statefulset.yaml
+│   │   └── service.yaml
+│   ├── user/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml
+│   ├── auth/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml
+│   ├── permission/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml
+│   ├── biz/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml
+│   ├── gateway/
+│   │   ├── deployment.yaml
+│   │   └── service.yaml
+│   └── frontend/
+│       ├── deployment.yaml
+│       └── service.yaml
 ```
 
-```bash
-kubectl apply -f deploy/k8s/base/namespace.yaml
-# 后续所有资源都部署在 hellogo namespace 中
-kubectl config set-context --current --namespace=hellogo
-```
-
-### 5.2 Deployment（部署）
-
-> Deployment 管理 Pod 的副本数、更新策略和回滚。每个微服务一个 Deployment。
-
-**User Service Deployment 示例：**
+### 4.2 Chart.yaml
 
 ```yaml
-# deploy/k8s/base/user-service/deployment.yaml
+apiVersion: v2
+name: hellogo
+description: helloGo 微服务 K8s 部署（minikube）
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+```
+
+### 4.3 values.yaml
+
+```yaml
+# ── 全局 ─────────────────────────────────────────────────────
+namespace: hellogo
+imagePullPolicy: IfNotPresent
+
+# ── 数据库 ────────────────────────────────────────────────────
+mysql:
+  enabled: true
+  image: mysql:8.0
+  rootPassword: root123456
+  database: hellogo
+  storage: 5Gi
+  port: 3306
+
+# ── Redis ─────────────────────────────────────────────────────
+redis:
+  enabled: true
+  image: redis:7-alpine
+  password: ""
+  storage: 1Gi
+  port: 6379
+
+# ── 共享配置 ──────────────────────────────────────────────────
+config:
+  appEnv: production
+  dbType: mysql
+  dbName: hellogo
+  dbUser: root
+  jwtSecret: k8s-jwt-secret-change-in-prod
+  jwtExpires: 1d
+  jwtRefreshExpires: 7d
+  loginMaxFails: 5
+  loginLockTTL: 600
+
+# ── 微服务 ────────────────────────────────────────────────────
+services:
+  user:
+    image: hellogo/user
+    tag: latest
+    replicas: 2
+    grpcPort: 50001
+    healthPort: 8080
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+
+  auth:
+    image: hellogo/auth
+    tag: latest
+    replicas: 2
+    grpcPort: 50002
+    healthPort: 8080
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+
+  permission:
+    image: hellogo/permission
+    tag: latest
+    replicas: 2
+    grpcPort: 50003
+    healthPort: 8080
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+
+  biz:
+    image: hellogo/biz
+    tag: latest
+    replicas: 2
+    grpcPort: 50004
+    healthPort: 8080
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+
+  gateway:
+    image: hellogo/gateway
+    tag: latest
+    replicas: 2
+    httpPort: 8000
+    healthPort: 8080
+    nodePort: 30080
+    corsOrigins: "*"
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: 1000m, memory: 512Mi }
+
+# ── 前端 ──────────────────────────────────────────────────────
+frontend:
+  image: hellogo/frontend
+  tag: latest
+  replicas: 1
+  port: 80
+  nodePort: 30090
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
+```
+
+### 4.4 模板示例
+
+**通用 Deployment 模板（以 user 服务为例）：**
+
+```yaml
+# deploy/helm/hellogo/templates/user/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: user-service
-  namespace: hellogo
+  namespace: {{ .Values.namespace }}
   labels:
-    app.kubernetes.io/name: user-service
-    app.kubernetes.io/part-of: hellogo
-    app.kubernetes.io/component: backend
+    app: user-service
 spec:
-  replicas: 2
-  # 滚动更新策略
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1          # 更新时最多多出 1 个 Pod
-      maxUnavailable: 0    # 更新时不允许有 Pod 不可用（零停机）
+  replicas: {{ .Values.services.user.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: user-service
+      app: user-service
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: user-service
-        app.kubernetes.io/part-of: hellogo
-        app.kubernetes.io/component: backend
-        # Prometheus 自动发现指标端点
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
+        app: user-service
     spec:
-      # 优雅停机等待时间
-      terminationGracePeriodSeconds: 45
-
-      # 安全上下文（Pod 级别）
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
-
-      # 初始化容器（可选：等待数据库就绪）
-      initContainers:
-        - name: wait-for-db
-          image: busybox:1.36
-          command:
-            - sh
-            - -c
-            - |
-              until nc -z $DB_HOST $DB_PORT; do
-                echo "等待数据库就绪..."
-                sleep 2
-              done
-              echo "数据库已就绪"
-          env:
-            - name: DB_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: hellogo-config
-                  key: DB_HOST
-            - name: DB_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: hellogo-config
-                  key: DB_PORT
-
+      terminationGracePeriodSeconds: 30
       containers:
         - name: user-service
-          image: registry.example.com/hellogo-user:latest
-          imagePullPolicy: Always
-
-          # 环境变量（从 ConfigMap 和 Secret 注入）
-          envFrom:
-            - configMapRef:
-                name: hellogo-config
-            - secretRef:
-                name: hellogo-secrets
-
-          # 资源限制（必须设置，HPA 依赖此值）
-          resources:
-            requests:
-              cpu: 100m        # 最小请求 0.1 核
-              memory: 128Mi    # 最小请求 128MB
-            limits:
-              cpu: 500m        # 最大使用 0.5 核
-              memory: 256Mi    # 最大使用 256MB
-
-          # 端口声明
+          image: "{{ .Values.services.user.image }}:{{ .Values.services.user.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
           ports:
             - name: grpc
-              containerPort: 50001
-              protocol: TCP
-            - name: http
-              containerPort: 8080
-              protocol: TCP
-
-          # 启动探针：启动慢时使用，成功前不执行其他探针
-          startupProbe:
-            httpGet:
-              path: /healthz/startup
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 3
-            failureThreshold: 10   # 最多等 30s（3s × 10 次）
-
-          # 存活探针：检测进程是否存活
+              containerPort: {{ .Values.services.user.grpcPort }}
+            - name: health
+              containerPort: {{ .Values.services.user.healthPort }}
+          env:
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: hellogo-config
+                  key: APP_ENV
+            - name: DB_TYPE
+              valueFrom:
+                configMapKeyRef:
+                  name: hellogo-config
+                  key: DB_TYPE
+            - name: DB_HOST
+              value: "mysql"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: hellogo-config
+                  key: DB_NAME
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: hellogo-config
+                  key: DB_USER
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: hellogo-secrets
+                  key: db-password
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: hellogo-secrets
+                  key: jwt-secret
+            - name: GRPC_PORT
+              value: "{{ .Values.services.user.grpcPort }}"
+            - name: USER_SERVICE_ADDR
+              value: "user-service:50001"
+            - name: AUTH_SERVICE_ADDR
+              value: "auth-service:50002"
+            - name: PERMISSION_SERVICE_ADDR
+              value: "permission-service:50003"
+            - name: BIZ_SERVICE_ADDR
+              value: "biz-service:50004"
+          # 存活探针
           livenessProbe:
             httpGet:
-              path: /healthz/liveness
-              port: http
-            initialDelaySeconds: 0   # startupProbe 成功后立即开始
-            periodSeconds: 10
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
             timeoutSeconds: 3
-            failureThreshold: 3      # 连续 3 次失败则重启 Pod
-
-          # 就绪探针：检测是否可以接收流量
+            failureThreshold: 3
+          # 就绪探针
           readinessProbe:
             httpGet:
-              path: /healthz/readiness
-              port: http
-            initialDelaySeconds: 0
-            periodSeconds: 5
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
             timeoutSeconds: 3
-            failureThreshold: 3      # 连续 3 次失败则从 Endpoints 移除
-
-          # 安全上下文（容器级别）
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
-
-          # 生命周期钩子
-          lifecycle:
-            preStop:
-              exec:
-                # 等待 K8s 更新 Endpoints 路由规则
-                # 避免 SIGTERM 和路由更新并行导致丢请求
-                command: ["sh", "-c", "sleep 5"]
-
-          # 只读文件系统的可写挂载
-          volumeMounts:
-            - name: tmp
-              mountPath: /tmp
-
-      volumes:
-        - name: tmp
-          emptyDir: {}
+            failureThreshold: 3
+          # 启动探针（给服务足够的初始化时间）
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10
+          resources:
+            requests:
+              cpu: {{ .Values.services.user.resources.requests.cpu }}
+              memory: {{ .Values.services.user.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.services.user.resources.limits.cpu }}
+              memory: {{ .Values.services.user.resources.limits.memory }}
 ```
 
-### 5.3 Service（服务）
-
-> Service 为一组 Pod 提供稳定的 IP 地址和 DNS 名称。  
-> K8s 的 Service 自带负载均衡（kube-proxy 实现），替代了 Phase 2 中 gRPC 客户端的 round_robin。
-
-**gRPC 服务使用 Headless Service：**
+**Gateway Service（NodePort 暴露）：**
 
 ```yaml
-# deploy/k8s/base/user-service/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: user-service
-  namespace: hellogo
-  labels:
-    app.kubernetes.io/name: user-service
-    app.kubernetes.io/part-of: hellogo
-spec:
-  # Headless Service（clusterIP: None）
-  # gRPC 需要直连到每个 Pod IP，不能用 ClusterIP 的 L4 负载均衡
-  # Headless Service 让 DNS 返回所有 Pod IP（A 记录列表）
-  # gRPC 客户端可以自己实现负载均衡（round_robin）
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: user-service
-  ports:
-    - name: grpc
-      port: 50001
-      targetPort: grpc
-      protocol: TCP
-    - name: http
-      port: 8080
-      targetPort: http
-      protocol: TCP
-```
-
-> **为什么 gRPC 用 Headless Service？**  
-> 普通 ClusterIP Service 通过 kube-proxy 做 L4 负载均衡（iptables/IPVS），  
-> 但 gRPC 使用 HTTP/2 长连接，所有请求会复用同一条 TCP 连接，导致负载不均匀。  
-> Headless Service 让 gRPC 客户端直接拿到所有 Pod IP，自己做 round_robin 负载均衡。
-
-**Gateway 使用 ClusterIP Service（HTTP 短连接，普通负载均衡即可）：**
-
-```yaml
-# deploy/k8s/base/gateway/service.yaml
+# deploy/helm/hellogo/templates/gateway/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: gateway
-  namespace: hellogo
-  labels:
-    app.kubernetes.io/name: gateway
-    app.kubernetes.io/part-of: hellogo
+  namespace: {{ .Values.namespace }}
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
-    app.kubernetes.io/name: gateway
+    app: gateway
   ports:
     - name: http
-      port: 8000
+      port: {{ .Values.services.gateway.httpPort }}
       targetPort: http
-      protocol: TCP
+      nodePort: {{ .Values.services.gateway.nodePort }}
 ```
 
-### 5.4 全部服务 Deployment + Service 一览
-
-| 服务 | Deployment | Service 类型 | gRPC 端口 | HTTP 端口 |
-|------|-----------|-------------|-----------|-----------|
-| Gateway | gateway | ClusterIP | — | 8000 |
-| User Service | user-service | Headless | 50001 | 8080 |
-| Auth Service | auth-service | Headless | 50002 | 8080 |
-| Permission Service | permission-service | Headless | 50003 | 8080 |
-| Biz Service | biz-service | Headless | 50004 | 8080 |
-
-**其他服务的 Deployment 与 User Service 结构相同，仅修改：**
-- `name`、`labels`、`image`
-- gRPC 端口号
-- 环境变量（下游服务地址）
-- 资源限制（按服务特点调整）
-
----
-
-## 6. 配置管理与密钥
-
-### 6.1 ConfigMap（非敏感配置）
+**Frontend Service（NodePort 暴露）：**
 
 ```yaml
-# deploy/k8s/base/configmap.yaml
+# deploy/helm/hellogo/templates/frontend/service.yaml
 apiVersion: v1
-kind: ConfigMap
+kind: Service
 metadata:
-  name: hellogo-config
-  namespace: hellogo
-  labels:
-    app.kubernetes.io/part-of: hellogo
-data:
-  # ===== 通用 =====
-  APP_ENV: "production"
-  PORT: "8000"
-  SERVICE_DISCOVERY: "dns"
-
-  # ===== 数据库 =====
-  DB_TYPE: "mysql"
-  DB_HOST: "mysql.hellogo.svc.cluster.local"
-  DB_PORT: "3306"
-  DB_NAME: "hellogo"
-
-  # ===== Redis =====
-  REDIS_HOST: "redis.hellogo.svc.cluster.local"
-  REDIS_PORT: "6379"
-
-  # ===== JWT =====
-  JWT_EXPIRES: "1d"
-  JWT_REFRESH_EXPIRES: "7d"
-
-  # ===== 安全 =====
-  CSRF_ENABLED: "true"
-  CSRF_MODE: "header"
-  CORS_ORIGINS: "https://app.hellogo.com"
-
-  # ===== 限流 =====
-  THROTTLE_TTL: "60"
-  THROTTLE_LIMIT: "100"
-
-  # ===== 登录安全 =====
-  LOGIN_MAX_FAILS: "5"
-  LOGIN_LOCK_TTL: "600"
-
-  # ===== 上传 =====
-  UPLOAD_DEST: "/app/upload"
-  UPLOAD_MAX_SIZE: "10485760"
-  UPLOAD_ALLOWED_TYPES: "image/jpeg,image/png,application/pdf"
-  UPLOAD_CLEAN_INTERVAL_SEC: "3600"
-  UPLOAD_TTL_DAYS: "30"
-
-  # ===== 服务地址（K8s DNS 格式） =====
-  USER_SERVICE_ADDR: "user-service.hellogo.svc.cluster.local:50001"
-  AUTH_SERVICE_ADDR: "auth-service.hellogo.svc.cluster.local:50002"
-  PERMISSION_SERVICE_ADDR: "permission-service.hellogo.svc.cluster.local:50003"
-  BIZ_SERVICE_ADDR: "biz-service.hellogo.svc.cluster.local:50004"
-
-  # ===== 可观测性 =====
-  OTEL_ENABLED: "true"
-  OTEL_ENDPOINT: "jaeger-collector.hellogo.svc.cluster.local:4318"
-  ENABLE_METRICS: "true"
-```
-
-### 6.2 Secret（敏感数据）
-
-```yaml
-# deploy/k8s/base/secret.yaml
-# 注意：生产环境中不要将 Secret 明文提交到 Git！
-# 使用 Sealed Secrets、External Secrets Operator 或 Vault 管理。
-apiVersion: v1
-kind: Secret
-metadata:
-  name: hellogo-secrets
-  namespace: hellogo
-  labels:
-    app.kubernetes.io/part-of: hellogo
-type: Opaque
-# 值是 base64 编码的（不是加密！仅避免明文暴露）
-# echo -n "your-value" | base64
-data:
-  DB_USER: "aGVsbG9nbw=="           # hellogo
-  DB_PASS: "eW91ci1kYi1wYXNz"       # your-db-pass
-  REDIS_PASS: ""                    # 空密码
-  JWT_SECRET: "eW91ci1qd3Qtc2VjcmV0LWtleS1jaGFuZ2UtbWU="  # your-jwt-secret-key-change-me
-  CSRF_SECRET: "Y2hhbmdlLW1l"       # change-me
-```
-
-**生产环境推荐使用 Sealed Secrets：**
-
-```bash
-# 安装 Sealed Secrets Controller
-kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.0/controller.yaml
-
-# 安装 kubeseal CLI
-go install github.com/bitnami-labs/sealed-secrets/cmd/kubeseal@latest
-
-# 加密 Secret（加密后的 SealedSecret 可以安全提交到 Git）
-cat secret.yaml | kubeseal \
-    --controller-namespace kube-system \
-    --controller-name sealed-secrets-controller \
-    --format yaml \
-    > sealed-secret.yaml
-
-# sealed-secret.yaml 可以安全提交到 Git
-# K8s 集群中的 Sealed Secrets Controller 会自动解密为普通 Secret
-```
-
-### 6.3 环境变量注入方式
-
-```yaml
-# 在 Deployment 中注入配置（推荐方式）
-envFrom:
-  # 全部 ConfigMap 键值对注入为环境变量
-  - configMapRef:
-      name: hellogo-config
-  # 全部 Secret 键值对注入为环境变量
-  - secretRef:
-      name: hellogo-secrets
-
-# 也可以单独注入某个键
-env:
-  - name: DB_PASS
-    valueFrom:
-      secretKeyRef:
-        name: hellogo-secrets
-        key: DB_PASS
-  - name: POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name       # 注入 Pod 名称（日志中使用）
-  - name: POD_IP
-    valueFrom:
-      fieldRef:
-        fieldPath: status.podIP        # 注入 Pod IP
-```
-
----
-
-## 7. 服务发现：etcd → K8s DNS
-
-> 第二阶段使用 etcd + TTL 做服务注册与发现。在 K8s 环境中，可以完全去掉 etcd，  
-> 利用 K8s 内置的 DNS 服务（CoreDNS）实现服务发现。
-
-### 7.1 两种模式对比
-
-```
-第二阶段：etcd 服务发现
-┌──────────┐    注册 /services/user/10.0.0.1:50001    ┌──────┐
-│ User Svc │ ────────────────────────────────────────→ │ etcd │
-└──────────┘                                           └──┬───┘
-                                                          │
-┌──────────┐    查询 /services/user/*                     │
-│ Gateway  │ ────────────────────────────────────────────→│
-└──────────┘    返回 [10.0.0.1:50001, 10.0.0.2:50001]    │
-                                                          │
-问题：etcd 本身需要运维（高可用、备份、监控）
-
-
-第三阶段：K8s DNS 服务发现
-┌──────────┐    K8s 自动注册                              ┌──────────┐
-│ User Svc │ ────────────────────────────────────────────→│ CoreDNS  │
-│ Pod 1    │                                              │          │
-│ Pod 2    │                                              │          │
-│ Pod 3    │                                              └────┬─────┘
-└──────────┘                                                   │
-                                                               │
-┌──────────┐    DNS 查询 user-service.hellogo.svc.cluster.local│
-│ Gateway  │ ─────────────────────────────────────────────────→│
-└──────────┘    返回所有 Pod IP（A 记录列表）                   │
-
-优势：无需额外组件，K8s 自动管理 DNS 记录
-```
-
-### 7.2 K8s DNS 解析规则
-
-```
-# K8s DNS 解析格式：
-<service-name>.<namespace>.svc.cluster.local
-
-# 示例（hellogo 命名空间内）：
-user-service.hellogo.svc.cluster.local       → User Service 所有 Pod IP
-auth-service.hellogo.svc.cluster.local        → Auth Service 所有 Pod IP
-gateway.hellogo.svc.cluster.local             → Gateway 所有 Pod IP
-
-# 同命名空间内可以简写：
-user-service                                  → 同 user-service.hellogo.svc.cluster.local
-user-service.hellogo                          → 同上
-
-# Headless Service（clusterIP: None）返回所有 Pod IP：
-# dig user-service.hellogo.svc.cluster.local
-# ;; ANSWER SECTION:
-# user-service.hellogo.svc.cluster.local. 5 IN A 10.244.0.15
-# user-service.hellogo.svc.cluster.local. 5 IN A 10.244.0.16
-# user-service.hellogo.svc.cluster.local. 5 IN A 10.244.1.12
-
-# Pod 级别的 DNS（StatefulSet 才有）：
-<pod-name>.<headless-service>.<namespace>.svc.cluster.local
-```
-
-### 7.3 Gateway 连接下游服务
-
-```go
-// internal/gateway/clients.go
-// Gateway 连接下游 gRPC 服务的代码改造
-
-package gateway
-
-import (
-    "context"
-
-    "go.uber.org/zap"
-    "google.golang.org/grpc"
-    "google.golang.org/grpc/credentials/insecure"
-)
-
-// ServiceClients 管理所有下游 gRPC 连接
-type ServiceClients struct {
-    UserConn       *grpc.ClientConn
-    AuthConn       *grpc.ClientConn
-    PermissionConn *grpc.ClientConn
-    BizConn        *grpc.ClientConn
-}
-
-// NewServiceClients 创建到下游服务的 gRPC 连接
-func NewServiceClients(cfg *config.Config, logger *zap.Logger) (*ServiceClients, error) {
-    // gRPC 服务配置（重试 + 负载均衡）
-    serviceConfig := `{
-        "loadBalancingPolicy": "round_robin",
-        "methodConfig": [{
-            "name": [{}],
-            "retryPolicy": {
-                "maxAttempts": 3,
-                "initialBackoff": "0.1s",
-                "maxBackoff": "1s",
-                "backoffMultiplier": 2.0,
-                "retryableStatusCodes": ["UNAVAILABLE"]
-            }
-        }]
-    }`
-
-    dialOpts := []grpc.DialOption{
-        grpc.WithTransportCredentials(insecure.NewCredentials()),
-        grpc.WithDefaultServiceConfig(serviceConfig),
-    }
-
-    // K8s DNS 模式：直接用 DNS 地址
-    // 例如: dns:///user-service.hellogo.svc.cluster.local:50001
-    userConn, err := grpc.NewClient(
-        "dns:///"+cfg.UserServiceAddr,
-        dialOpts...,
-    )
-    if err != nil {
-        return nil, err
-    }
-
-    authConn, err := grpc.NewClient(
-        "dns:///"+cfg.AuthServiceAddr,
-        dialOpts...,
-    )
-    if err != nil {
-        return nil, err
-    }
-
-    // ... 其他服务类似 ...
-
-    return &ServiceClients{
-        UserConn:       userConn,
-        AuthConn:       authConn,
-        PermissionConn: permissionConn,
-        BizConn:        bizConn,
-    }, nil
-}
-```
-
-### 7.4 迁移步骤
-
-```
-迁移流程（渐进式，可回退）：
-
-Step 1: 代码层面支持双模式
-├── 添加 SERVICE_DISCOVERY 配置项（"etcd" 或 "dns"）
-├── 实现 DNSDiscoverer（§3.4 中的代码）
-├── 保留 EtcdDiscoverer 不删除
-└── 验证：本地开发继续用 etcd 模式正常运行
-
-Step 2: K8s 环境验证 DNS
-├── 部署服务到 K8s（先用 etcd 模式 + K8s 内 etcd）
-├── 切换到 DNS 模式
-├── 验证服务间调用正常
-└── 验证 Headless Service DNS 解析正确
-
-Step 3: 清理
-├── 从 docker-compose.yml 中移除 etcd 服务
-├── 删除 etcd 相关代码
-└── 更新文档
-```
-
----
-
-## 8. 入口与流量管理
-
-### 8.1 Ingress（HTTP 入口）
-
-> Ingress 将集群外部的 HTTP/HTTPS 流量引入集群内部服务。  
-> 相当于 K8s 版的 Nginx 反向代理。
-
-```yaml
-# deploy/k8s/base/gateway/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: hellogo-ingress
-  namespace: hellogo
-  labels:
-    app.kubernetes.io/part-of: hellogo
-  annotations:
-    # Nginx Ingress Controller 配置
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    # 请求体大小限制（文件上传）
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    # 请求超时
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
-    # CORS
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "http://localhost:9003"
-    # 限流（每个 IP 每秒 10 个请求）
-    nginx.ingress.kubernetes.io/limit-rps: "10"
-    nginx.ingress.kubernetes.io/limit-connections: "20"
+  name: frontend
+  namespace: {{ .Values.namespace }}
 spec:
-  ingressClassName: nginx
-  rules:
-    # 生产环境使用真实域名
-    - host: api.hellogo.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gateway
-                port:
-                  number: 8000
-    # Swagger 文档（可选）
-    - host: docs.hellogo.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gateway
-                port:
-                  number: 8000
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: {{ .Values.frontend.port }}
+      targetPort: http
+      nodePort: {{ .Values.frontend.nodePort }}
 ```
 
-### 8.2 TLS 证书（自动签发）
-
-> 使用 cert-manager 自动从 Let's Encrypt 签发免费 TLS 证书。
+**MySQL StatefulSet：**
 
 ```yaml
-# 安装 cert-manager
-# kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
-
-# 创建 Let's Encrypt Issuer
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: admin@example.com
-    privateKeySecretRef:
-      name: letsencrypt-prod-key
-    solvers:
-      - http01:
-          ingress:
-            class: nginx
----
-# 在 Ingress 中启用自动 TLS
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: hellogo-ingress
-  namespace: hellogo
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - api.hellogo.local
-      secretName: hellogo-tls     # cert-manager 自动创建此 Secret
-  rules:
-    - host: api.hellogo.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gateway
-                port:
-                  number: 8000
-```
-
-### 8.3 本地开发环境入口
-
-```bash
-# minikube 环境
-minikube addons enable ingress
-
-# 配置本地域名解析
-echo "$(minikube ip) api.hellogo.local" | sudo tee -a /etc/hosts
-
-# kind 环境
-# kind 创建时已映射 80/443 端口到宿主机
-echo "127.0.0.1 api.hellogo.local" | sudo tee -a /etc/hosts
-
-# 验证
-curl http://api.hellogo.local/api/health
-```
-
----
-
-## 9. 持久化存储
-
-### 9.1 存储策略
-
-> 生产环境中，数据库和缓存推荐使用云厂商的托管服务（RDS / ElastiCache）。  
-> 开发/测试环境可以在 K8s 内部署，使用 PVC 持久化数据。
-
-| 组件 | 开发/测试环境 | 生产环境 |
-|------|-------------|----------|
-| MySQL | StatefulSet + PVC | Cloud SQL / RDS / PolarDB |
-| Redis | StatefulSet + PVC | ElastiCache / Redis Cloud |
-| etcd | 不再需要（用 K8s DNS） | 不再需要 |
-
-### 9.2 MySQL StatefulSet（开发环境用）
-
-```yaml
-# deploy/k8s/base/mysql-statefulset.yaml
-# 仅用于开发/测试环境，生产环境使用托管数据库
+# deploy/helm/hellogo/templates/mysql/statefulset.yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mysql
-  namespace: hellogo
+  namespace: {{ .Values.namespace }}
 spec:
   serviceName: mysql
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: mysql
+      app: mysql
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mysql
+        app: mysql
     spec:
       containers:
         - name: mysql
-          image: mysql:8.0
+          image: {{ .Values.mysql.image }}
           ports:
-            - containerPort: 3306
-              name: mysql
+            - containerPort: {{ .Values.mysql.port }}
           env:
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: hellogo-secrets
-                  key: MYSQL_ROOT_PASSWORD
+                  key: db-password
             - name: MYSQL_DATABASE
-              value: hellogo
-          resources:
-            requests:
-              cpu: 250m
-              memory: 512Mi
-            limits:
-              cpu: "1"
-              memory: 1Gi
+              value: {{ .Values.mysql.database }}
           volumeMounts:
             - name: mysql-data
               mountPath: /var/lib/mysql
-            - name: mysql-initdb
-              mountPath: /docker-entrypoint-initdb.d
-          # MySQL 存活检查
-          livenessProbe:
-            exec:
-              command: ["mysqladmin", "ping", "-h", "localhost"]
-            initialDelaySeconds: 30
-            periodSeconds: 10
-          # MySQL 就绪检查
-          readinessProbe:
-            exec:
-              command:
-                - sh
-                - -c
-                - "mysql -u root -p$MYSQL_ROOT_PASSWORD -e 'SELECT 1'"
-            initialDelaySeconds: 10
-            periodSeconds: 5
-      volumes:
-        - name: mysql-initdb
-          configMap:
-            name: mysql-initdb
-  # PVC 模板（每个 Pod 自动创建独立 PVC）
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits:   { cpu: 1000m, memory: 1Gi }
   volumeClaimTemplates:
     - metadata:
         name: mysql-data
       spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: standard    # minikube 默认 StorageClass
+        accessModes: [ReadWriteOnce]
         resources:
           requests:
-            storage: 5Gi
----
-# MySQL Headless Service
-apiVersion: v1
-kind: Service
-metadata:
-  name: mysql
-  namespace: hellogo
-spec:
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: mysql
-  ports:
-    - port: 3306
-      targetPort: mysql
+            storage: {{ .Values.mysql.storage }}
 ```
 
-### 9.3 Redis StatefulSet（开发环境用）
+**Redis StatefulSet：**
 
 ```yaml
-# deploy/k8s/base/redis-statefulset.yaml
+# deploy/helm/hellogo/templates/redis/statefulset.yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: redis
-  namespace: hellogo
+  namespace: {{ .Values.namespace }}
 spec:
   serviceName: redis
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: redis
+      app: redis
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: redis
+        app: redis
     spec:
       containers:
         - name: redis
-          image: redis:7-alpine
-          command: ["redis-server", "--appendonly", "yes"]
+          image: {{ .Values.redis.image }}
           ports:
-            - containerPort: 6379
-              name: redis
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 250m
-              memory: 256Mi
+            - containerPort: {{ .Values.redis.port }}
           volumeMounts:
             - name: redis-data
               mountPath: /data
-          livenessProbe:
-            exec:
-              command: ["redis-cli", "ping"]
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          readinessProbe:
-            exec:
-              command: ["redis-cli", "ping"]
-            initialDelaySeconds: 5
-            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 256Mi }
   volumeClaimTemplates:
     - metadata:
         name: redis-data
       spec:
-        accessModes: ["ReadWriteOnce"]
-        storageClassName: standard
+        accessModes: [ReadWriteOnce]
         resources:
           requests:
-            storage: 1Gi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis
-  namespace: hellogo
-spec:
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: redis
-  ports:
-    - port: 6379
-      targetPort: redis
-```
-
-### 9.4 数据库迁移 Job
-
-```yaml
-# deploy/k8s/base/db-migrate-job.yaml
-# K8s Job：一次性任务，完成后自动退出
-# 在应用 Deployment 之前运行，确保数据库 schema 是最新的
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: db-migrate
-  namespace: hellogo
-spec:
-  backoffLimit: 3
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: migrate
-          image: registry.example.com/hellogo-user:latest
-          command: ["./server", "--migrate-only"]
-          envFrom:
-            - configMapRef:
-                name: hellogo-config
-            - secretRef:
-                name: hellogo-secrets
+            storage: {{ .Values.redis.storage }}
 ```
 
 ---
 
-## 10. Helm Chart 打包
+## 5. 部署与验证
 
-> Helm 是 K8s 的包管理器（类似 Go 的 `go mod`、Node 的 `npm`）。  
-> 用模板（template）+ 值文件（values）来管理不同环境的差异。
-
-### 10.1 Chart.yaml
-
-```yaml
-# deploy/helm/hellogo/Chart.yaml
-apiVersion: v2
-name: hellogo
-description: helloGo 微服务管理平台 Helm Chart
-type: application
-version: 0.1.0          # Chart 版本
-appVersion: "1.0.0"     # 应用版本
-
-keywords:
-  - go
-  - grpc
-  - microservices
-  - admin
-
-maintainers:
-  - name: hellogo-team
-
-dependencies: []
-# 如果需要依赖其他 Chart（如 mysql-operator）：
-# dependencies:
-#   - name: mysql
-#     version: "9.x.x"
-#     repository: "https://charts.bitnami.com/bitnami"
-#     condition: mysql.enabled
-```
-
-### 10.2 values.yaml（默认值 — dev 环境）
-
-```yaml
-# deploy/helm/hellogo/values.yaml
-# 默认值，适用于开发环境
-
-# ===== 全局配置 =====
-global:
-  imageRegistry: registry.example.com
-  imagePullPolicy: Always
-  namespace: hellogo
-
-# ===== 通用配置（ConfigMap） =====
-config:
-  appEnv: development
-  logLevel: debug
-  logFormat: text
-  serviceDiscovery: dns
-  dbType: mysql
-  dbHost: mysql.hellogo.svc.cluster.local
-  dbPort: "3306"
-  dbName: hellogo
-  redisHost: redis.hellogo.svc.cluster.local
-  redisPort: "6379"
-  jwtExpires: "1d"
-  jwtRefreshExpires: "7d"
-  throttleTTL: "60"
-  throttleLimit: "100"
-  csrfEnabled: "false"
-  csrfMode: "header"
-  loginMaxFails: "5"
-  loginLockTTL: "600"
-  port: "8000"
-  otelEnabled: "false"
-  enableMetrics: "true"
-  uploadMaxSize: "10485760"
-  uploadAllowedTypes: "image/jpeg,image/png,application/pdf"
-
-# ===== 密钥（Secret） =====
-secrets:
-  dbUser: hellogo
-  dbPassword: changeme
-  redisPassword: ""
-  jwtSecret: changeme-in-production
-
-# ===== Gateway =====
-gateway:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: hellogo-gateway
-    tag: latest
-  service:
-    type: ClusterIP
-    port: 8000
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-  autoscaling:
-    enabled: false
-    minReplicas: 2
-    maxReplicas: 10
-    targetCPUUtilizationPercentage: 70
-
-# ===== User Service =====
-userService:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: hellogo-user
-    tag: latest
-  grpcPort: 50001
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-  autoscaling:
-    enabled: false
-
-# ===== Auth Service =====
-authService:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: hellogo-auth
-    tag: latest
-  grpcPort: 50002
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-  autoscaling:
-    enabled: false
-
-# ===== Permission Service =====
-permissionService:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: hellogo-permission
-    tag: latest
-  grpcPort: 50003
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-  autoscaling:
-    enabled: false
-
-# ===== Biz Service =====
-bizService:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: hellogo-biz
-    tag: latest
-  grpcPort: 50004
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-  autoscaling:
-    enabled: false
-
-# ===== Ingress =====
-ingress:
-  enabled: true
-  className: nginx
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-  hosts:
-    - host: api.hellogo.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
-  # 生产环境启用 TLS：
-  # tls:
-  #   - secretName: hellogo-tls
-  #     hosts:
-  #       - api.hellogo.local
-
-# ===== MySQL（开发环境内置） =====
-mysql:
-  enabled: true    # 生产环境设为 false，使用托管数据库
-  storage: 5Gi
-  storageClass: standard
-
-# ===== Redis（开发环境内置） =====
-redis:
-  enabled: true    # 生产环境设为 false，使用托管 Redis
-  storage: 1Gi
-  storageClass: standard
-```
-
-### 10.3 模板文件示例
-
-```yaml
-# deploy/helm/hellogo/templates/_helpers.tpl
-{{/*
-通用标签
-*/}}
-{{- define "hellogo.labels" -}}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/part-of: hellogo
-helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
-{{- end }}
-
-{{/*
-通用选择器标签
-*/}}
-{{- define "hellogo.selectorLabels" -}}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-```
-
-```yaml
-# deploy/helm/hellogo/templates/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Release.Name }}-config
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "hellogo.labels" . | nindent 4 }}
-data:
-  APP_ENV: {{ .Values.config.appEnv | quote }}
-  PORT: {{ .Values.config.port | quote }}
-  SERVICE_DISCOVERY: {{ .Values.config.serviceDiscovery | quote }}
-  DB_TYPE: {{ .Values.config.dbType | quote }}
-  DB_HOST: {{ .Values.config.dbHost | quote }}
-  DB_PORT: {{ .Values.config.dbPort | quote }}
-  DB_NAME: {{ .Values.config.dbName | quote }}
-  REDIS_HOST: {{ .Values.config.redisHost | quote }}
-  REDIS_PORT: {{ .Values.config.redisPort | quote }}
-  JWT_EXPIRES: {{ .Values.config.jwtExpires | quote }}
-  JWT_REFRESH_EXPIRES: {{ .Values.config.jwtRefreshExpires | quote }}
-  CSRF_ENABLED: {{ .Values.config.csrfEnabled | quote }}
-  CSRF_MODE: {{ .Values.config.csrfMode | quote }}
-  THROTTLE_TTL: {{ .Values.config.throttleTTL | quote }}
-  THROTTLE_LIMIT: {{ .Values.config.throttleLimit | quote }}
-  LOGIN_MAX_FAILS: {{ .Values.config.loginMaxFails | quote }}
-  LOGIN_LOCK_TTL: {{ .Values.config.loginLockTTL | quote }}
-  USER_SERVICE_ADDR: "user-service.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.userService.grpcPort }}"
-  AUTH_SERVICE_ADDR: "auth-service.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.authService.grpcPort }}"
-  PERMISSION_SERVICE_ADDR: "permission-service.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.permissionService.grpcPort }}"
-  BIZ_SERVICE_ADDR: "biz-service.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.bizService.grpcPort }}"
-  OTEL_ENABLED: {{ .Values.config.otelEnabled | quote }}
-  ENABLE_METRICS: {{ .Values.config.enableMetrics | quote }}
-```
-
-```yaml
-# deploy/helm/hellogo/templates/gateway/deployment.yaml
-{{- if .Values.gateway.enabled }}
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ .Release.Name }}-gateway
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    app.kubernetes.io/name: gateway
-    {{- include "hellogo.labels" . | nindent 4 }}
-spec:
-  replicas: {{ .Values.gateway.replicaCount }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: gateway
-      {{- include "hellogo.selectorLabels" . | nindent 6 }}
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: gateway
-        {{- include "hellogo.selectorLabels" . | nindent 8 }}
-    spec:
-      terminationGracePeriodSeconds: 45
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-      containers:
-        - name: gateway
-          image: "{{ .Values.global.imageRegistry }}/{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
-          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Release.Name }}-config
-            - secretRef:
-                name: {{ .Release.Name }}-secrets
-          ports:
-            - name: http
-              containerPort: 8000
-            - name: health
-              containerPort: 8080
-          resources:
-            {{- toYaml .Values.gateway.resources | nindent 12 }}
-          # 健康检查探针（与 §5.2 一致，使用 /healthz/* 端点）
-          startupProbe:
-            httpGet:
-              path: /healthz/startup
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 3
-            failureThreshold: 10
-          livenessProbe:
-            httpGet:
-              path: /healthz/liveness
-              port: health
-            initialDelaySeconds: 0
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /healthz/readiness
-              port: health
-            initialDelaySeconds: 0
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 3
-          lifecycle:
-            preStop:
-              exec:
-                command: ["sh", "-c", "sleep 5"]
-{{- end }}
-```
-
-```yaml
-# deploy/helm/hellogo/templates/gateway/hpa.yaml
-{{- if and .Values.gateway.enabled .Values.gateway.autoscaling.enabled }}
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: {{ .Release.Name }}-gateway
-  namespace: {{ .Values.global.namespace }}
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: {{ .Release.Name }}-gateway
-  minReplicas: {{ .Values.gateway.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.gateway.autoscaling.maxReplicas }}
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.gateway.autoscaling.targetCPUUtilizationPercentage }}
-{{- end }}
-```
-
-### 10.4 环境 Values 覆盖
-
-```yaml
-# deploy/helm/hellogo/values-production.yaml
-# 生产环境覆盖项
-
-global:
-  imagePullPolicy: IfNotPresent
-
-config:
-  appEnv: production
-  logLevel: warn
-  logFormat: json
-  csrfEnabled: "true"
-  otelEnabled: "true"
-
-# 生产环境不使用集群内数据库
-mysql:
-  enabled: false
-
-redis:
-  enabled: false
-
-# 使用外部数据库地址
-config:
-  dbHost: "your-rds-endpoint.rds.amazonaws.com"
-  redisHost: "your-elasticache-endpoint.cache.amazonaws.com"
-
-# 所有服务增加副本数和资源
-gateway:
-  replicaCount: 3
-  resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
-    limits:
-      cpu: "2"
-      memory: 1Gi
-  autoscaling:
-    enabled: true
-    minReplicas: 3
-    maxReplicas: 20
-    targetCPUUtilizationPercentage: 60
-
-userService:
-  replicaCount: 3
-  resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: "1"
-      memory: 512Mi
-  autoscaling:
-    enabled: true
-    minReplicas: 3
-    maxReplicas: 10
-
-# ... 其他服务类似 ...
-
-ingress:
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-  tls:
-    - secretName: hellogo-tls
-      hosts:
-        - api.hellogo.com
-```
-
-### 10.5 Helm 操作命令
+### 5.1 构建镜像
 
 ```bash
-# ===== 安装 =====
-# 开发环境
-helm install hellogo ./deploy/helm/hellogo \
-    --namespace hellogo --create-namespace
+# 切换到 minikube Docker 环境
+eval $(minikube docker-env)
 
-# 生产环境（使用生产 values）
-helm install hellogo ./deploy/helm/hellogo \
-    --namespace hellogo --create-namespace \
-    -f ./deploy/helm/hellogo/values-production.yaml
+# 构建所有镜像
+bash deploy/docker/build.sh
 
-# ===== 升级 =====
-helm upgrade hellogo ./deploy/helm/hellogo \
-    --namespace hellogo \
-    -f ./deploy/helm/hellogo/values-production.yaml
-
-# ===== 回滚 =====
-helm rollback hellogo 1 --namespace hellogo    # 回滚到版本 1
-helm history hellogo --namespace hellogo       # 查看版本历史
-
-# ===== 卸载 =====
-helm uninstall hellogo --namespace hellogo
-
-# ===== 调试 =====
-helm template hellogo ./deploy/helm/hellogo    # 渲染模板（不部署，查看生成的 YAML）
-helm lint ./deploy/helm/hellogo                # 检查 Chart 语法
-helm diff upgrade hellogo ./deploy/helm/hellogo  # 查看变更（需安装 helm-diff 插件）
+# 验证镜像
+docker images | grep hellogo
+# 应看到：hellogo/user, hellogo/auth, hellogo/permission, hellogo/biz, hellogo/gateway, hellogo/frontend
 ```
 
-### 10.6 Helm 测试
+### 5.2 Helm 安装
 
-```yaml
-# deploy/helm/hellogo/templates/tests/test-connection.yaml
-# Helm 内置测试：helm test hellogo
-apiVersion: v1
-kind: Pod
-metadata:
-  name: {{ .Release.Name }}-test-connection
-  namespace: {{ .Values.global.namespace }}
-  annotations:
-    "helm.sh/hook": test
-spec:
-  containers:
-    - name: test
-      image: busybox:1.36
-      command:
-        - sh
-        - -c
-        - |
-          # 测试 Gateway 可达
-          wget -q --spider http://gateway:8000/api/health || exit 1
-          echo "Gateway 健康检查通过"
+```bash
+# 安装（首次部署）
+helm install hellogo deploy/helm/hellogo/ \
+  --namespace hellogo \
+  --create-namespace
 
-          # 测试 User Service DNS 解析
-          nslookup user-service || exit 1
-          echo "User Service DNS 解析通过"
-  restartPolicy: Never
+# 查看部署状态
+helm status hellogo -n hellogo
+kubectl get pods -n hellogo
+kubectl get svc -n hellogo
+```
+
+### 5.3 等待服务就绪
+
+```bash
+# 等待所有 Pod Running
+kubectl wait --for=condition=Ready pod -l app -n hellogo --timeout=120s
+
+# 查看 Pod 状态
+kubectl get pods -n hellogo -o wide
+
+# 预期输出：
+# NAME                  READY   STATUS    RESTARTS   AGE
+# mysql-0               1/1     Running   0          60s
+# redis-0               1/1     Running   0          60s
+# user-service-xxx      1/1     Running   0          60s
+# auth-service-xxx      1/1     Running   0          60s
+# permission-service-xx 1/1     Running   0          60s
+# biz-service-xxx       1/1     Running   0          60s
+# gateway-xxx           1/1     Running   0          60s
+# frontend-xxx          1/1     Running   0          60s
+```
+
+### 5.4 数据库初始化
+
+```bash
+# 执行数据库迁移（进入 user-service Pod）
+kubectl exec -it deploy/user-service -n hellogo -- ./server migrate
+
+# 或者在 MySQL Pod 中手动执行 SQL
+kubectl exec -it mysql-0 -n hellogo -- mysql -uroot -proot123456 hellogo
+```
+
+### 5.5 验证访问
+
+```bash
+# 获取 minikube IP
+MINIKUBE_IP=$(minikube ip)
+
+# 测试 Gateway
+curl http://${MINIKUBE_IP}:30080/api/health
+# {"code":"SUCCESS","data":{"service":"gateway","status":"ok"}}
+
+# 测试登录
+curl -X POST http://${MINIKUBE_IP}:30080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+
+# 打开前端
+echo "前端地址: http://${MINIKUBE_IP}:30090"
+# 在浏览器中打开
 ```
 
 ---
 
-## 11. CI/CD 流水线
+## 6. Lens 可视化管理
 
-### 11.1 流水线架构
+### 6.1 连接集群
 
-```
-代码提交
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│  CI Pipeline（每次 push / PR 触发）                   │
-│                                                      │
-│  ┌──────┐   ┌──────┐   ┌───────┐   ┌──────────┐   │
-│  │ lint │──→│ test │──→│ build │──→│ push img │   │
-│  └──────┘   └──────┘   └───────┘   └──────────┘   │
-│                                                      │
-│  golangci     go test     go build    docker push    │
-│  -lint       -cover      多服务       到 Registry    │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼ （merge 到 main 分支时）
-┌─────────────────────────────────────────────────────┐
-│  CD Pipeline                                         │
-│                                                      │
-│  ┌──────────┐   ┌──────────────┐   ┌────────────┐  │
-│  │ helm     │──→│ kubectl/helm │──→│ 健康检查   │  │
-│  │ package  │   │ upgrade      │   │ 验证       │  │
-│  └──────────┘   └──────────────┘   └────────────┘  │
-│                                                      │
-│  打包 Chart    部署到 K8s      验证部署成功           │
-└─────────────────────────────────────────────────────┘
-```
+1. 打开 Lens
+2. 左侧 "Catalog" → "Clusters" → 选择 "minikube"
+3. 点击 "Connect"
+4. 在命名空间筛选器中选择 "hellogo"
 
-### 11.2 GitHub Actions 完整流水线
+### 6.2 常用操作
 
-```yaml
-# .github/workflows/ci.yml
-name: CI
+| 操作 | Lens 界面 |
+|------|----------|
+| 查看 Pod 列表 | Workloads → Pods → 筛选 namespace: hellogo |
+| 查看 Pod 日志 | 点击 Pod → Logs 标签 |
+| 进入容器 Shell | 点击 Pod → Shell 标签 |
+| 查看 Service | Network → Services |
+| 查看 ConfigMap | Config → ConfigMaps |
+| 查看 Secret | Config → Secrets |
+| 扩缩容 | 点击 Deployment → 修改 Replicas |
+| 重启 Pod | 点击 Pod → Delete（Deployment 会自动重建）|
+| 查看事件 | 点击 Pod → Events 标签 |
 
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
+### 6.3 资源监控
 
-env:
-  GO_VERSION: "1.23"
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
+Lens 内置了资源使用情况展示：
+- **Cluster Overview**：CPU / Memory 使用率
+- **Pod Metrics**：每个 Pod 的实时资源消耗
+- **HPA**（如配置）：自动扩缩容状态
 
-jobs:
-  # ===== 代码质量 =====
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: latest
+---
 
-  # ===== 单元测试 =====
-  test:
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: 运行测试
-        run: go test ./... -coverprofile=coverage.out -count=1
-      - name: 检查覆盖率
-        run: |
-          coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}')
-          echo "覆盖率: $coverage"
-          # 覆盖率不低于 60%
-          echo "$coverage" | awk '{gsub(/%/,""); if ($1 < 60) exit 1}'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.out
+## 7. 日常运维操作
 
-  # ===== 构建 Docker 镜像 =====
-  build:
-    needs: [lint, test]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    strategy:
-      matrix:
-        service: [gateway, user, auth, permission, biz]
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
+### 7.1 查看日志
 
-      - name: 登录容器仓库
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+```bash
+# 查看某个服务的日志（实时）
+kubectl logs -f deploy/user-service -n hellogo
 
-      - name: 提取版本信息
-        id: meta
-        run: |
-          SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
-          echo "sha_short=$SHA_SHORT" >> $GITHUB_OUTPUT
-          echo "image_name=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}" >> $GITHUB_OUTPUT
+# 查看最近 100 行
+kubectl logs --tail=100 deploy/gateway -n hellogo
 
-      - name: 构建并推送镜像
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: deploy/docker/Dockerfile
-          build-args: SERVICE=${{ matrix.service }}
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image_name }}:latest
-            ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.sha_short }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: 镜像安全扫描（Trivy）
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: "${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.sha_short }}"
-          format: table
-          severity: CRITICAL,HIGH
+# 查看所有服务的日志
+kubectl logs -l app -n hellogo --tail=50
 ```
 
-```yaml
-# .github/workflows/cd-dev.yml
-name: CD - Dev
+### 7.2 进入容器调试
 
-on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [develop]
+```bash
+# 进入 user-service 容器
+kubectl exec -it deploy/user-service -n hellogo -- sh
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
+# 在容器内测试 gRPC 连接
+wget -qO- http://localhost:8080/healthz
 
-jobs:
-  deploy-dev:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
-    environment: development
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 配置 kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: 配置 kubeconfig
-        run: |
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
-
-      - name: 安装 Helm
-        uses: azure/setup-helm@v4
-
-      - name: 提取镜像标签
-        id: meta
-        run: |
-          SHA_SHORT=$(echo ${{ github.sha }} | cut -c1-7)
-          echo "tag=$SHA_SHORT" >> $GITHUB_OUTPUT
-
-      - name: Helm 部署到 dev 环境
-        run: |
-          helm upgrade --install hellogo ./deploy/helm/hellogo \
-            --namespace hellogo-dev --create-namespace \
-            --set global.imageRegistry=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }} \
-            --set gateway.image.tag=${{ steps.meta.outputs.tag }} \
-            --set userService.image.tag=${{ steps.meta.outputs.tag }} \
-            --set authService.image.tag=${{ steps.meta.outputs.tag }} \
-            --set permissionService.image.tag=${{ steps.meta.outputs.tag }} \
-            --set bizService.image.tag=${{ steps.meta.outputs.tag }} \
-            --wait --timeout 5m
-
-      - name: 验证部署
-        run: |
-          kubectl -n hellogo-dev rollout status deployment/hellogo-gateway --timeout=120s
-          kubectl -n hellogo-dev rollout status deployment/hellogo-user-service --timeout=120s
-          # 运行 Helm 测试
-          helm test hellogo --namespace hellogo-dev
+# 测试 MySQL 连接（从任意 Pod）
+kubectl run debug --rm -it --image=busybox -n hellogo -- sh
+# 在 debug Pod 中：
+# wget -qO- http://mysql:3306
+# nslookup user-service
 ```
 
-```yaml
-# .github/workflows/cd-production.yml
-name: CD - Production
+### 7.3 更新镜像（滚动更新）
 
-on:
-  push:
-    tags: ["v*"]    # 只在打 tag 时触发
+```bash
+# 重新构建镜像
+eval $(minikube docker-env)
+docker build --build-arg SERVICE_NAME=user \
+  -f deploy/docker/Dockerfile.service \
+  -t hellogo/user:v2 .
 
-jobs:
-  deploy-production:
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://api.hellogo.com
-    steps:
-      - uses: actions/checkout@v4
+# 更新 Helm release
+helm upgrade hellogo deploy/helm/hellogo/ \
+  --namespace hellogo \
+  --set services.user.tag=v2
 
-      - name: 配置 kubectl
-        uses: azure/setup-kubectl@v4
+# 查看滚动更新状态
+kubectl rollout status deploy/user-service -n hellogo
 
-      - name: 配置 kubeconfig
-        run: |
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
-
-      - name: 安装 Helm
-        uses: azure/setup-helm@v4
-
-      - name: 提取版本号
-        id: meta
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Helm 部署到生产环境
-        run: |
-          helm upgrade --install hellogo ./deploy/helm/hellogo \
-            --namespace hellogo --create-namespace \
-            -f ./deploy/helm/hellogo/values-production.yaml \
-            --set global.imageRegistry=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }} \
-            --set gateway.image.tag=${{ steps.meta.outputs.version }} \
-            --set userService.image.tag=${{ steps.meta.outputs.version }} \
-            --set authService.image.tag=${{ steps.meta.outputs.version }} \
-            --set permissionService.image.tag=${{ steps.meta.outputs.version }} \
-            --set bizService.image.tag=${{ steps.meta.outputs.version }} \
-            --wait --timeout 10m
-
-      - name: 验证生产部署
-        run: |
-          kubectl -n hellogo rollout status deployment/hellogo-gateway --timeout=300s
-          # 冒烟测试
-          curl -sf https://api.hellogo.com/api/health || exit 1
-
-      - name: 部署失败自动回滚
-        if: failure()
-        run: |
-          helm rollback hellogo --namespace hellogo
-          echo "部署失败，已自动回滚"
+# 查看历史版本
+kubectl rollout history deploy/user-service -n hellogo
 ```
 
-### 11.3 Makefile 集成
+### 7.4 回滚
+
+```bash
+# 回滚到上一版本
+helm rollback hellogo -n hellogo
+
+# 回滚到指定版本
+helm rollback hellogo 1 -n hellogo
+
+# 查看回滚历史
+helm history hellogo -n hellogo
+```
+
+### 7.5 扩缩容
+
+```bash
+# 临时扩容 user-service
+kubectl scale deploy/user-service --replicas=5 -n hellogo
+
+# 通过 Helm values 永久修改
+helm upgrade hellogo deploy/helm/hellogo/ \
+  --namespace hellogo \
+  --set services.user.replicas=3
+```
+
+### 7.6 完全卸载
+
+```bash
+# 卸载 Helm release
+helm uninstall hellogo -n hellogo
+
+# 删除命名空间（包括 PVC 数据）
+kubectl delete namespace hellogo
+
+# 停止 minikube
+minikube stop
+
+# 删除 minikube 集群（完全重置）
+minikube delete
+```
+
+---
+
+## 8. Makefile 目标
+
+在现有 Makefile 中追加以下目标：
 
 ```makefile
-# Makefile 新增 K8s 相关命令
+# ── Kubernetes / Helm ──────────────────────────────────────────
 
-# ===== K8s 部署 =====
-KUBE_NS ?= hellogo
-HELM_CHART := deploy/helm/hellogo
+## k8s-docker-env: 切换到 minikube Docker 环境
+.PHONY: k8s-docker-env
+k8s-docker-env:
+	@eval $$(minikube docker-env) && echo "已切换到 minikube Docker 环境"
 
-.PHONY: k8s-deploy-dev
-k8s-deploy-dev:
-	helm upgrade --install hellogo $(HELM_CHART) \
-		--namespace $(KUBE_NS)-dev --create-namespace \
-		--wait --timeout 5m
+## k8s-build: 构建所有 Docker 镜像（使用 minikube Docker）
+.PHONY: k8s-build
+k8s-build:
+	@eval $$(minikube docker-env) && bash deploy/docker/build.sh
 
-.PHONY: k8s-deploy-prod
-k8s-deploy-prod:
-	helm upgrade --install hellogo $(HELM_CHART) \
-		--namespace $(KUBE_NS) --create-namespace \
-		-f $(HELM_CHART)/values-production.yaml \
-		--wait --timeout 10m
+## k8s-build-service: 构建指定服务镜像（用法：make k8s-build-service SVC=user）
+.PHONY: k8s-build-service
+k8s-build-service:
+	@eval $$(minikube docker-env) && \
+	docker build --build-arg SERVICE_NAME=$(SVC) \
+		-f deploy/docker/Dockerfile.service \
+		-t hellogo/$(SVC):latest .
 
-.PHONY: k8s-rollback
-k8s-rollback:
-	helm rollback hellogo --namespace $(KUBE_NS)
+## k8s-build-frontend: 构建前端镜像
+.PHONY: k8s-build-frontend
+k8s-build-frontend:
+	@eval $$(minikube docker-env) && \
+	docker build \
+		--build-arg VITE_API_URL=http://$$(minikube ip):30080 \
+		-f deploy/docker/Dockerfile.frontend \
+		-t hellogo/frontend:latest .
 
+## k8s-install: 首次安装 Helm release
+.PHONY: k8s-install
+k8s-install:
+	helm install hellogo deploy/helm/hellogo/ \
+		--namespace hellogo \
+		--create-namespace
+
+## k8s-upgrade: 升级 Helm release
+.PHONY: k8s-upgrade
+k8s-upgrade:
+	helm upgrade hellogo deploy/helm/hellogo/ \
+		--namespace hellogo
+
+## k8s-uninstall: 卸载 Helm release
+.PHONY: k8s-uninstall
+k8s-uninstall:
+	helm uninstall hellogo -n hellogo
+
+## k8s-status: 查看部署状态
 .PHONY: k8s-status
 k8s-status:
-	kubectl -n $(KUBE_NS) get all
-	kubectl -n $(KUBE_NS) get hpa
+	@echo "=== Pods ==="
+	@kubectl get pods -n hellogo -o wide
+	@echo ""
+	@echo "=== Services ==="
+	@kubectl get svc -n hellogo
+	@echo ""
+	@echo "=== Helm Releases ==="
+	@helm list -n hellogo
 
+## k8s-logs: 查看指定服务日志（用法：make k8s-logs SVC=user）
 .PHONY: k8s-logs
 k8s-logs:
-	@echo "用法: make k8s-logs SVC=gateway"
-	kubectl -n $(KUBE_NS) logs -f deployment/hellogo-$(SVC)
+	kubectl logs -f deploy/$(SVC)-service -n hellogo --tail=100
 
-.PHONY: k8s-test
-k8s-test:
-	helm test hellogo --namespace $(KUBE_NS)
+## k8s-shell: 进入指定服务容器（用法：make k8s-shell SVC=user）
+.PHONY: k8s-shell
+k8s-shell:
+	kubectl exec -it deploy/$(SVC)-service -n hellogo -- sh
 
-.PHONY: k8s-port-forward
-k8s-port-forward:
-	kubectl -n $(KUBE_NS) port-forward svc/gateway 8000:8000
+## k8s-urls: 显示所有外部访问地址
+.PHONY: k8s-urls
+k8s-urls:
+	@MINIKUBE_IP=$$(minikube ip); \
+	echo "前端:    http://$${MINIKUBE_IP}:30090"; \
+	echo "Gateway: http://$${MINIKUBE_IP}:30080"; \
+	echo "API:     http://$${MINIKUBE_IP}:30080/api/health"
 
-# ===== Docker 镜像 =====
-REGISTRY ?= registry.example.com
-VERSION ?= latest
+## k8s-restart: 重启指定服务（用法：make k8s-restart SVC=user）
+.PHONY: k8s-restart
+k8s-restart:
+	kubectl rollout restart deploy/$(SVC)-service -n hellogo
 
-.PHONY: docker-build-all
-docker-build-all:
-	@for svc in gateway user auth permission biz; do \
-		echo "构建 $$svc ..."; \
-		docker build --build-arg SERVICE=$$svc \
-			-t $(REGISTRY)/hellogo-$$svc:$(VERSION) \
-			-f deploy/docker/Dockerfile .; \
-	done
-
-.PHONY: docker-push-all
-docker-push-all:
-	@for svc in gateway user auth permission biz; do \
-		echo "推送 $$svc ..."; \
-		docker push $(REGISTRY)/hellogo-$$svc:$(VERSION); \
-	done
+## k8s-rollback: 回滚 Helm release
+.PHONY: k8s-rollback
+k8s-rollback:
+	helm rollback hellogo -n hellogo
 ```
 
 ---
 
-## 12. 可观测性（K8s 原生方案）
+## 9. 常见问题排查
 
-### 12.1 监控架构
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│                     可观测性架构                                 │
-│                                                                 │
-│  ┌──────────────────┐    ┌─────────────────────┐               │
-│  │   微服务 Pod     │    │   Prometheus         │               │
-│  │                  │    │   (指标采集)          │               │
-│  │  /metrics ───────┼────│→ 每 15s 拉取一次    │               │
-│  │  (Prometheus     │    │                      │               │
-│  │   client_golang) │    │  告警规则 → AlertManager             │
-│  └──────────────────┘    └──────────┬───────────┘               │
-│                                      │                          │
-│                                      ▼                          │
-│  ┌──────────────────┐    ┌─────────────────────┐               │
-│  │  Grafana         │    │  Jaeger              │               │
-│  │  (可视化面板)     │←───│  (链路追踪)          │               │
-│  │                  │    │                      │               │
-│  │  • QPS 面板      │    │  • TraceID 查询      │               │
-│  │  • 延迟面板      │    │  • 调用链可视化       │               │
-│  │  • 错误率面板    │    │  • Span 分析          │               │
-│  │  • 资源使用面板  │    │                      │               │
-│  └──────────────────┘    └─────────────────────┘               │
-└────────────────────────────────────────────────────────────────┘
-```
-
-### 12.2 Prometheus 指标暴露
-
-> Phase 1 已经集成了 prometheus/client_golang。在 K8s 中，通过 Pod 注解让 Prometheus 自动发现。
-
-```go
-// internal/shared/metrics/metrics.go
-// 所有微服务共享的指标定义
-
-package metrics
-
-import (
-    "github.com/prometheus/client_golang/prometheus"
-    "github.com/prometheus/client_golang/prometheus/promauto"
-)
-
-var (
-    // gRPC 请求总数
-    GRPCRequestsTotal = promauto.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "grpc_requests_total",
-            Help: "gRPC 请求总数",
-        },
-        []string{"service", "method", "status"},
-    )
-
-    // gRPC 请求延迟
-    GRPCRequestDuration = promauto.NewHistogramVec(
-        prometheus.HistogramOpts{
-            Name:    "grpc_request_duration_seconds",
-            Help:    "gRPC 请求延迟（秒）",
-            Buckets: prometheus.DefBuckets,
-        },
-        []string{"service", "method"},
-    )
-
-    // gRPC 活跃连接数
-    GRPCActiveConnections = promauto.NewGaugeVec(
-        prometheus.GaugeOpts{
-            Name: "grpc_active_connections",
-            Help: "gRPC 活跃连接数",
-        },
-        []string{"service"},
-    )
-
-    // 业务指标：登录尝试
-    LoginAttempts = promauto.NewCounterVec(
-        prometheus.CounterOpts{
-            Name: "login_attempts_total",
-            Help: "登录尝试总数",
-        },
-        []string{"status"},  // "success" / "failure" / "locked"
-    )
-)
-```
-
-**在 Pod 注解中配置 Prometheus 自动发现：**
-
-```yaml
-# 在 Deployment 的 Pod template 中添加注解
-metadata:
-  annotations:
-    prometheus.io/scrape: "true"     # 允许 Prometheus 抓取
-    prometheus.io/port: "8080"       # 指标端口
-    prometheus.io/path: "/metrics"   # 指标路径
-```
-
-### 12.3 Prometheus + Grafana 部署（kube-prometheus-stack）
+### 9.1 Pod 启动失败
 
 ```bash
-# 安装 kube-prometheus-stack（包含 Prometheus + Grafana + AlertManager）
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+# 查看 Pod 事件（最常见排查手段）
+kubectl describe pod <pod-name> -n hellogo
 
-helm install kube-prometheus prometheus-community/kube-prometheus-stack \
-    --namespace monitoring --create-namespace \
-    --set grafana.adminPassword=admin123 \
-    --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false
-
-# 访问 Grafana（端口转发）
-kubectl port-forward -n monitoring svc/kube-prometheus-grafana 3000:80
-# 浏览器打开 http://localhost:3000
-# 用户名: admin  密码: admin123
+# 常见原因：
+# - ImagePullBackOff：镜像不存在 → 检查 eval $(minikube docker-env) 是否执行
+# - CrashLoopBackOff：服务启动崩溃 → 查看日志 kubectl logs <pod-name> -n hellogo
+# - Pending：资源不足 → 检查 minikube 资源：minikube status
 ```
 
-### 12.4 Grafana Dashboard 关键面板
-
-```
-推荐的 Grafana 面板：
-
-1. 服务概览（Overview）
-   ├── QPS（每秒请求数）— 按服务分组
-   ├── 错误率（Error Rate）— 5xx / 总请求
-   ├── P50 / P95 / P99 延迟
-   └── 活跃连接数
-
-2. gRPC 详情
-   ├── 各 RPC 方法的请求量
-   ├── 各 RPC 方法的延迟分布
-   ├── 错误码分布（UNAVAILABLE / INTERNAL / ...）
-   └── 重试次数
-
-3. 基础设施
-   ├── Pod CPU / 内存使用率
-   ├── Pod 重启次数
-   ├── HPA 副本数变化
-   └── PVC 使用率
-
-4. 业务指标
-   ├── 登录成功/失败趋势
-   ├── 活跃用户数
-   └── 文件上传量
-```
-
-### 12.5 告警规则
-
-```yaml
-# 关键告警规则示例
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  name: hellogo-alerts
-  namespace: hellogo
-spec:
-  groups:
-    - name: hellogo.rules
-      rules:
-        # 服务不可用
-        - alert: ServiceDown
-          expr: up{namespace="hellogo"} == 0
-          for: 1m
-          labels:
-            severity: critical
-          annotations:
-            summary: "{{ $labels.pod }} 不可用"
-
-        # 错误率过高
-        - alert: HighErrorRate
-          expr: |
-            sum(rate(grpc_requests_total{status!="OK"}[5m]))
-            / sum(rate(grpc_requests_total[5m])) > 0.05
-          for: 5m
-          labels:
-            severity: warning
-          annotations:
-            summary: "gRPC 错误率超过 5%"
-
-        # Pod 频繁重启
-        - alert: PodCrashLooping
-          expr: |
-            increase(kube_pod_container_status_restarts_total{namespace="hellogo"}[1h]) > 3
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "{{ $labels.pod }} 1小时内重启超过 3 次"
-
-        # HPA 达到最大副本数
-        - alert: HPAMaxedOut
-          expr: |
-            kube_horizontalpodautoscaler_status_current_replicas
-            == kube_horizontalpodautoscaler_spec_max_replicas
-          for: 15m
-          labels:
-            severity: warning
-          annotations:
-            summary: "{{ $labels.horizontalpodautoscaler }} 已达到最大副本数"
-```
-
----
-
-## 13. 生产加固
-
-### 13.1 HPA 自动扩缩容
-
-> HPA（Horizontal Pod Autoscaler）根据 CPU / 内存 / 自定义指标自动调整 Pod 副本数。
-
-```yaml
-# deploy/k8s/overlays/production/patches/hpa.yaml
-# Gateway HPA（对外入口，按 QPS 扩缩）
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: gateway
-  namespace: hellogo
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: gateway
-  minReplicas: 3
-  maxReplicas: 20
-  metrics:
-    # CPU 利用率
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 60
-    # 内存利用率
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 70
-  behavior:
-    # 扩容策略：快速扩容
-    scaleUp:
-      stabilizationWindowSeconds: 30     # 30s 内持续高负载才扩
-      policies:
-        - type: Pods
-          value: 4                       # 每次最多扩 4 个
-          periodSeconds: 60
-    # 缩容策略：缓慢缩容（避免反复震荡）
-    scaleDown:
-      stabilizationWindowSeconds: 300    # 5 分钟内持续低负载才缩
-      policies:
-        - type: Pods
-          value: 1                       # 每次只缩 1 个
-          periodSeconds: 120
-```
-
-### 13.2 PodDisruptionBudget（PDB）
-
-> PDB 保障在维护操作（如节点升级、驱逐）期间，始终有最小数量的 Pod 可用。
-
-```yaml
-# 每个微服务都需要 PDB
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: gateway-pdb
-  namespace: hellogo
-spec:
-  # 始终保证至少 50% 的 Pod 可用
-  maxUnavailable: "50%"
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: gateway
----
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: user-service-pdb
-  namespace: hellogo
-spec:
-  # 始终保证至少有 2 个 Pod 可用
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: user-service
-```
-
-### 13.3 NetworkPolicy（网络隔离）
-
-> 默认情况下，K8s 集群内所有 Pod 可以互相通信。NetworkPolicy 限制网络访问范围。
-
-```yaml
-# 只允许 Gateway 访问后端 gRPC 服务
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: backend-grpc-only-from-gateway
-  namespace: hellogo
-spec:
-  podSelector:
-    matchExpressions:
-      - key: app.kubernetes.io/component
-        operator: In
-        values: ["backend"]
-  policyTypes:
-    - Ingress
-  ingress:
-    # 只允许来自 Gateway Pod 的 gRPC 流量
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: gateway
-      ports:
-        - port: grpc
-          protocol: TCP
-    # 允许 Prometheus 抓取指标
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: monitoring
-      ports:
-        - port: http
-          protocol: TCP
----
-# Gateway 只允许来自 Ingress Controller 的流量
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: gateway-only-from-ingress
-  namespace: hellogo
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: gateway
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: ingress-nginx
-      ports:
-        - port: http
-          protocol: TCP
----
-# 只允许后端服务访问 MySQL 和 Redis
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: db-only-from-backend
-  namespace: hellogo
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: mysql
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/component
-                operator: In
-                values: ["backend"]
-      ports:
-        - port: 3306
-          protocol: TCP
-```
-
-### 13.4 资源配额（ResourceQuota）
-
-```yaml
-# 限制 hellogo 命名空间的总资源使用量
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: hellogo-quota
-  namespace: hellogo
-spec:
-  hard:
-    requests.cpu: "4"
-    requests.memory: 8Gi
-    limits.cpu: "8"
-    limits.memory: 16Gi
-    pods: "50"
-    services: "20"
-    persistentvolumeclaims: "10"
-```
-
-### 13.5 安全检查清单
-
-```
-生产环境安全检查清单：
-
-容器安全
-  ✓ 非 root 用户运行（runAsNonRoot: true）
-  ✓ 只读根文件系统（readOnlyRootFilesystem: true）
-  ✓ 禁止特权提升（allowPrivilegeEscalation: false）
-  ✓ 删除所有 Linux capabilities（drop: ["ALL"]）
-  ✓ 使用 distroless 或最小基础镜像
-  ✓ 镜像安全扫描（Trivy）
-
-网络安全
-  ✓ NetworkPolicy 限制 Pod 间通信
-  ✓ Ingress TLS（HTTPS）
-  ✓ 内部 gRPC 可选 mTLS（Istio / Linkerd）
-
-密钥管理
-  ✓ 使用 Sealed Secrets / External Secrets / Vault
-  ✓ Secret 不以明文提交到 Git
-  ✓ 定期轮换密钥（JWT Secret、DB 密码）
-
-访问控制
-  ✓ RBAC 最小权限原则
-  ✓ ServiceAccount 专用（每个微服务一个）
-  ✓ 禁止使用 default ServiceAccount
-
-镜像安全
-  ✓ 固定镜像版本（不使用 :latest）
-  ✓ 使用私有 Registry
-  ✓ imagePullPolicy: IfNotPresent（生产环境）
-```
-
----
-
-## 14. 多环境策略
-
-### 14.1 环境拓扑
-
-```
-┌───────────────────────────────────────────────────────────────┐
-│                        多环境策略                              │
-├───────────┬─────────────┬──────────────┬──────────────────────┤
-│  环境      │ Namespace   │ K8s 集群     │ 用途                 │
-├───────────┼─────────────┼──────────────┼──────────────────────┤
-│ 本地开发   │ —           │ minikube/kind│ 开发者个人调试        │
-│ dev       │ hellogo-dev │ 共享 dev 集群 │ 联调测试              │
-│ staging   │ hellogo-stg │ 独立集群      │ 预发布验证            │
-│ production│ hellogo     │ 生产集群      │ 线上服务              │
-└───────────┴─────────────┴──────────────┴──────────────────────┘
-```
-
-### 14.2 Kustomize Overlay 方式
-
-```yaml
-# deploy/k8s/overlays/dev/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-namespace: hellogo-dev
-
-resources:
-  - ../../base
-
-# dev 环境的覆盖项
-patches:
-  # 减少副本数
-  - target:
-      kind: Deployment
-    patch: |
-      - op: replace
-        path: /spec/replicas
-        value: 1
-
-  # 降低资源限制
-  - target:
-      kind: Deployment
-    patch: |
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/cpu
-        value: 50m
-      - op: replace
-        path: /spec/template/spec/containers/0/resources/requests/memory
-        value: 64Mi
-```
-
-```yaml
-# deploy/k8s/overlays/production/kustomization.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-namespace: hellogo
-
-resources:
-  - ../../base
-  - patches/hpa.yaml
-  - patches/pdb.yaml
-  - patches/network-policy.yaml
-
-# 生产环境使用固定版本镜像
-images:
-  - name: registry.example.com/hellogo-gateway
-    newTag: v1.0.0
-  - name: registry.example.com/hellogo-user
-    newTag: v1.0.0
-  # ... 其他服务
-
-patches:
-  - target:
-      kind: Deployment
-    patch: |
-      - op: replace
-        path: /spec/replicas
-        value: 3
-```
-
-### 14.3 Helm Values 方式（推荐）
+### 9.2 服务间无法通信
 
 ```bash
-# 本地开发（minikube）
-helm install hellogo ./deploy/helm/hellogo \
-    --namespace hellogo-dev --create-namespace
+# 测试 DNS 解析
+kubectl run debug --rm -it --image=busybox -n hellogo -- nslookup user-service
 
-# dev 环境
-helm upgrade --install hellogo ./deploy/helm/hellogo \
-    --namespace hellogo-dev \
-    --set global.imageRegistry=ghcr.io/your-org \
-    --set gateway.image.tag=abc1234
+# 测试端口连通性
+kubectl run debug --rm -it --image=busybox -n hellogo -- \
+  wget -qO- http://user-service:50001
 
-# staging 环境
-helm upgrade --install hellogo ./deploy/helm/hellogo \
-    --namespace hellogo-stg \
-    -f ./deploy/helm/hellogo/values-staging.yaml
-
-# production 环境
-helm upgrade --install hellogo ./deploy/helm/hellogo \
-    --namespace hellogo \
-    -f ./deploy/helm/hellogo/values-production.yaml
+# 检查 Service 是否创建
+kubectl get svc -n hellogo
+kubectl get endpoints -n hellogo
 ```
 
-### 14.4 环境差异对照表
+### 9.3 数据库连接失败
 
-| 配置项 | 本地开发 | dev | staging | production |
-|--------|---------|-----|---------|------------|
-| 副本数 | 1 | 1 | 2 | 3+ |
-| HPA | 关 | 关 | 开 | 开 |
-| DB 来源 | 集群内 MySQL | 集群内 MySQL | 托管 RDS | 托管 RDS |
-| Redis 来源 | 集群内 Redis | 集群内 Redis | ElastiCache | ElastiCache |
-| 日志级别 | debug | debug | info | warn |
-| 日志格式 | text | json | json | json |
-| TLS | 无 | 无 | Let's Encrypt | Let's Encrypt |
-| CORS | localhost:9003 | dev.example.com | stg.example.com | example.com |
-| 限流 | 关 | 开（宽松） | 开 | 开（严格） |
-| 镜像标签 | :latest | :sha-xxxx | :v1.0.0-rc1 | :v1.0.0 |
-| 网络策略 | 无 | 基础 | 完整 | 完整 |
+```bash
+# 检查 MySQL Pod 状态
+kubectl get pod mysql-0 -n hellogo
+kubectl logs mysql-0 -n hellogo
+
+# 手动测试连接
+kubectl exec -it mysql-0 -n hellogo -- mysql -uroot -proot123456 -e "SHOW DATABASES"
+
+# 检查 Secret 是否正确
+kubectl get secret hellogo-secrets -n hellogo -o jsonpath='{.data.db-password}' | base64 -d
+```
+
+### 9.4 NodePort 无法访问
+
+```bash
+# 检查 minikube 是否运行
+minikube status
+
+# 获取正确的 minikube IP
+minikube ip
+
+# 检查 Service 类型
+kubectl get svc -n hellogo
+
+# 使用 minikube service 命令直接打开
+minikube service gateway -n hellogo
+minikube service frontend -n hellogo
+```
+
+### 9.5 Helm 安装失败
+
+```bash
+# 查看 Helm release 状态
+helm status hellogo -n hellogo
+
+# 查看渲染后的 YAML（调试模板）
+helm template hellogo deploy/helm/hellogo/ --namespace hellogo
+
+# 强制卸载（卡住时）
+helm uninstall hellogo -n hellogo --no-hooks
+kubectl delete namespace hellogo --force --grace-period=0
+```
+
+### 9.6 前端无法连接 Gateway
+
+```bash
+# 检查前端环境变量是否正确注入
+kubectl exec -it deploy/frontend -n hellogo -- cat /usr/share/nginx/html/index.html | grep API
+
+# 检查 CORS 配置
+kubectl get configmap -n hellogo hellogo-config -o yaml | grep CORS
+
+# 从集群外测试 Gateway
+curl http://$(minikube ip):30080/api/health
+```
 
 ---
 
-## 15. 阶段总结与时间规划
+## 附录：文件清单
 
-### 开发时间估算（初学者视角）
-
-| 阶段 | 内容 | 学习目标 | 预计时间 |
-|------|------|----------|----------|
-| §1 K8s 基础 | 概念 + minikube + kubectl | 理解 Pod/Deployment/Service | 3-4 天 |
-| §2 架构演进 | Compose vs K8s 对比 | 理解架构差异 | 1 天 |
-| §3 应用改造 | 探针 + 优雅停机 + 配置外部化 | 掌握云原生应用设计 | 3-4 天 |
-| §4 Dockerfile | 安全加固 + 多架构 | 生产级容器镜像 | 1-2 天 |
-| §5 K8s 清单 | Deployment + Service + Namespace | 手写 YAML 理解概念 | 2-3 天 |
-| §6 配置管理 | ConfigMap + Secret | 配置与密钥管理 | 1-2 天 |
-| §7 服务发现 | etcd → K8s DNS | 理解 K8s DNS 机制 | 2-3 天 |
-| §8 入口管理 | Ingress + TLS | HTTP 流量路由 | 1-2 天 |
-| §9 持久化 | PVC + StatefulSet | 理解 K8s 存储 | 1-2 天 |
-| §10 Helm | Chart 开发 + values | 模板化部署 | 2-3 天 |
-| §11 CI/CD | GitHub Actions 流水线 | 自动化构建部署 | 2-3 天 |
-| §12 可观测性 | Prometheus + Grafana | K8s 监控方案 | 2-3 天 |
-| §13 生产加固 | HPA + PDB + NetworkPolicy | 生产级安全与弹性 | 2-3 天 |
-| §14 多环境 | Kustomize / Helm overlays | 多环境管理 | 1-2 天 |
-| **合计** | | | **24-36 天** |
-
-### 建议的学习节奏
-
-```
-Week 1: K8s 基础（§1）+ 架构演进（§2）+ 应用改造（§3）
-         └→ 里程碑：理解 K8s 核心概念，应用支持健康检查
-
-Week 2: Dockerfile（§4）+ K8s 清单（§5）+ 配置管理（§6）
-         └→ 里程碑：手写 YAML 在 minikube 上运行单个服务
-
-Week 3: 服务发现（§7）+ 入口管理（§8）+ 持久化（§9）
-         └→ 里程碑：全部微服务在 K8s 上运行，curl 通过 Ingress 调用
-
-Week 4: Helm（§10）+ CI/CD（§11）
-         └→ 里程碑：helm install 一键部署，Git push 自动部署到 dev
-
-Week 5: 可观测性（§12）+ 生产加固（§13）+ 多环境（§14）
-         └→ 里程碑：Grafana 面板 + HPA 自动扩容 + 多环境部署
-```
-
-### 每完成一个阶段的自检清单
-
-- [ ] 所有微服务在 minikube 上正常运行
-- [ ] 健康检查探针全部通过（`kubectl describe pod` 无重启）
-- [ ] `curl` 通过 Ingress 访问 Gateway 成功
-- [ ] 服务间 gRPC 调用通过 K8s DNS 正常工作
-- [ ] ConfigMap / Secret 正确注入，无硬编码配置
-- [ ] Helm Chart 可以一键安装/卸载
-- [ ] CI/CD 流水线：push 代码后自动部署到 dev
-- [ ] Grafana 面板显示所有服务的指标
-- [ ] HPA 压测时自动扩容，空闲时自动缩容
-- [ ] NetworkPolicy 正确隔离了网络访问
-- [ ] Pod 重启后自动恢复（验证自愈能力）
-- [ ] 滚动更新零停机（验证 rolling update 策略）
-
-### 三阶段全景回顾
-
-```
-Phase 1: Fiber 单体应用（已完成）
-├── 用户/角色/权限/菜单/部门/字典/日志/上传
-├── JWT 认证 + RBAC 鉴权
-├── SQLite / MySQL / PostgreSQL
-└── Docker Compose 部署
-
-Phase 2: gRPC 微服务（规划中）
-├── 拆分为 4 个 gRPC 服务 + 1 个 API Gateway
-├── etcd 服务发现 + gRPC 负载均衡
-├── OpenTelemetry 链路追踪
-└── Docker Compose 全栈部署
-
-Phase 3: Kubernetes 部署（本文档）
-├── K8s 原生服务发现（DNS）
-├── Helm Chart 打包 + CI/CD
-├── HPA 自动扩缩容 + 滚动更新
-├── Prometheus + Grafana 监控
-├── NetworkPolicy + 安全加固
-└── 多环境（dev / staging / production）
-```
+| 文件路径 | 说明 |
+|---------|------|
+| `deploy/docker/Dockerfile.service` | 后端微服务 Dockerfile |
+| `deploy/docker/Dockerfile.frontend` | 前端 Dockerfile |
+| `deploy/docker/nginx.conf` | 前端 nginx 配置 |
+| `deploy/docker/build.sh` | 镜像构建脚本 |
+| `deploy/helm/hellogo/Chart.yaml` | Helm Chart 元信息 |
+| `deploy/helm/hellogo/values.yaml` | Helm 配置值 |
+| `deploy/helm/hellogo/templates/_helpers.tpl` | Helm 模板辅助函数 |
+| `deploy/helm/hellogo/templates/namespace.yaml` | 命名空间 |
+| `deploy/helm/hellogo/templates/secrets.yaml` | 敏感配置 Secret |
+| `deploy/helm/hellogo/templates/configmap.yaml` | 普通配置 ConfigMap |
+| `deploy/helm/hellogo/templates/mysql/*.yaml` | MySQL 资源 |
+| `deploy/helm/hellogo/templates/redis/*.yaml` | Redis 资源 |
+| `deploy/helm/hellogo/templates/user/*.yaml` | User Service 资源 |
+| `deploy/helm/hellogo/templates/auth/*.yaml` | Auth Service 资源 |
+| `deploy/helm/hellogo/templates/permission/*.yaml` | Permission Service 资源 |
+| `deploy/helm/hellogo/templates/biz/*.yaml` | Biz Service 资源 |
+| `deploy/helm/hellogo/templates/gateway/*.yaml` | Gateway 资源 |
+| `deploy/helm/hellogo/templates/frontend/*.yaml` | Frontend 资源 |
+| `internal/shared/health/health.go` | 健康检查共享包 |
