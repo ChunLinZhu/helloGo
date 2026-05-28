@@ -155,6 +155,10 @@ run-permission:
 run-biz:
 	$(GO) run ./cmd/biz/main.go
 
+## run-gateway: 启动 API Gateway（端口 8000，需先启动所有微服务）
+run-gateway:
+	$(GO) run ./cmd/gateway/main.go
+
 # ── 帮助 ──────────────────────────────────────────────────
 
 ## help: 显示所有可用命令
@@ -167,4 +171,4 @@ help:
         lint fmt swagger seed seed-purge \
         docker-up docker-down all-up infra-up infra-down docker-logs clean \
         frontend-install frontend-dev frontend-build \
-        proto proto-install run-user run-auth run-permission run-biz help
+        proto proto-install run-user run-auth run-permission run-biz run-gateway help
