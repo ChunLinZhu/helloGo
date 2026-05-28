@@ -5,6 +5,17 @@ app.kubernetes.io/instance: {{ .release }}
 app.kubernetes.io/managed-by: Helm
 {{- end }}
 
+{{/* init 容器：等待 MySQL 和 Redis 就绪 */}}
+{{- define "hellogo.initWaitDeps" -}}
+initContainers:
+  - name: wait-mysql
+    image: busybox:1.36
+    command: ['sh', '-c', 'until nc -z mysql {{ .Values.mysql.port }}; do echo waiting for mysql; sleep 2; done']
+  - name: wait-redis
+    image: busybox:1.36
+    command: ['sh', '-c', 'until nc -z redis {{ .Values.redis.port }}; do echo waiting for redis; sleep 2; done']
+{{- end }}
+
 {{/* 环境变量注入（ConfigMap + Secret） */}}
 {{- define "hellogo.env" -}}
 - name: APP_ENV

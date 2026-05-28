@@ -16,6 +16,10 @@ spec:
         app: auth-service
     spec:
       terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-redis
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z redis {{ .Values.redis.port }}; do echo waiting for redis; sleep 2; done']
       containers:
         - name: auth-service
           image: "{{ .Values.services.auth.image }}:{{ .Values.services.auth.tag }}"

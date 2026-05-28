@@ -5,6 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -164,14 +167,36 @@ func New(port int, conns *Connections, corsOrigins string, logger *zap.Logger) *
 	}
 }
 
-// Start 启动 Gateway 服务器
+// Start 启动 Gateway 服务器（含优雅停机）
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.port)
 	s.logger.Info("API Gateway 启动中",
 		zap.Int("port", s.port),
 		zap.String("addr", addr),
 	)
-	return s.app.Listen(addr)
+
+	// 在 goroutine 中启动监听，以便信号处理可以调用 Shutdown
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.app.Listen(addr)
+	}()
+
+	// 监听退出信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-quit:
+		s.logger.Info("收到退出信号，正在优雅关闭...", zap.String("signal", sig.String()))
+		if err := s.app.Shutdown(); err != nil {
+			s.logger.Error("Gateway 关闭失败", zap.Error(err))
+			return err
+		}
+		s.logger.Info("API Gateway 已安全停止")
+		return nil
+	case err := <-errCh:
+		return err
+	}
 }
 
 // generateCSRFToken 生成随机 CSRF Token

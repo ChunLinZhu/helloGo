@@ -16,6 +16,10 @@ spec:
         app: biz-service
     spec:
       terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-mysql
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z mysql {{ .Values.mysql.port }}; do echo waiting for mysql; sleep 2; done']
       containers:
         - name: biz-service
           image: "{{ .Values.services.biz.image }}:{{ .Values.services.biz.tag }}"
