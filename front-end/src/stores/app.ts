@@ -41,7 +41,6 @@ export const useAppStore = create<State & Actions>()(
         sessionId: state.sessionId,
         refreshToken: state.refreshToken,
         csrfToken: state.csrfToken,
-        apiUrl: state.apiUrl,
       }),
     }
   )

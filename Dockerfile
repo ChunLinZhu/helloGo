@@ -3,7 +3,7 @@
 # ============================================================
 
 # ── Stage 1: 编译 ──────────────────────────────────────────
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # CGO 编译需要 gcc（mattn/go-sqlite3 依赖）
 RUN apk add --no-cache gcc musl-dev
