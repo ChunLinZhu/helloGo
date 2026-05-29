@@ -35,8 +35,8 @@ COPY --from=builder /app/server .
 # 复制配置文件
 COPY configs/ ./configs/
 
-# 创建数据目录（SQLite 使用）
-RUN mkdir -p ./data && chown appuser:appuser ./data
+# 创建数据目录（SQLite 使用）和日志目录
+RUN mkdir -p ./data ./logs && chown appuser:appuser ./data ./logs
 
 # 非 root 用户运行
 USER appuser

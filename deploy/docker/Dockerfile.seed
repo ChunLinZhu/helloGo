@@ -2,7 +2,7 @@
 # 用法: docker build -f Dockerfile.seed -t hellogo/seed:latest .
 
 # ── 阶段一：编译 ──────────────────────────────────────────────
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache git gcc musl-dev
 

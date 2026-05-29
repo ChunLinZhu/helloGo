@@ -10,3 +10,6 @@ spec:
     - name: grpc
       port: {{ .Values.services.biz.grpcPort }}
       targetPort: grpc
+    - name: health
+      port: {{ .Values.services.biz.healthPort }}
+      targetPort: health

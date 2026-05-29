@@ -37,57 +37,57 @@ services:
   user:
     image: hellogo/user
     tag: latest
-    replicas: 2
+    replicas: 1
     grpcPort: 50001
     healthPort: 8080
     resources:
       requests:
-        cpu: 100m
+        cpu: 200m
         memory: 128Mi
       limits:
-        cpu: 500m
+        cpu: 1000m
         memory: 256Mi
 
   auth:
     image: hellogo/auth
     tag: latest
-    replicas: 2
+    replicas: 1
     grpcPort: 50002
     healthPort: 8080
     resources:
       requests:
-        cpu: 100m
+        cpu: 200m
         memory: 128Mi
       limits:
-        cpu: 500m
+        cpu: 1000m
         memory: 256Mi
 
   permission:
     image: hellogo/permission
     tag: latest
-    replicas: 2
+    replicas: 1
     grpcPort: 50003
     healthPort: 8080
     resources:
       requests:
-        cpu: 100m
+        cpu: 200m
         memory: 128Mi
       limits:
-        cpu: 500m
+        cpu: 1000m
         memory: 256Mi
 
   biz:
     image: hellogo/biz
     tag: latest
-    replicas: 2
+    replicas: 1
     grpcPort: 50004
     healthPort: 8080
     resources:
       requests:
-        cpu: 100m
+        cpu: 200m
         memory: 128Mi
       limits:
-        cpu: 500m
+        cpu: 1000m
         memory: 256Mi
 
   gateway:
