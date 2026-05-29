@@ -25,7 +25,7 @@ minikube start \
 
 验证：
 
-```bash◊
+```bash
 minikube status
 kubectl get nodes
 # 应看到 minikube 节点 Ready
@@ -39,7 +39,8 @@ make k8s-build
 
 构建内容：
 - 后端：`hellogo/user:latest`、`hellogo/auth:latest`、`hellogo/permission:latest`、`hellogo/biz:latest`、`hellogo/gateway:latest`
-- 前端：`hellogo/frontend:latest`（自动注入 `VITE_API_URL=http://$(minikube ip):30080`）
+- 前端：`hellogo/frontend:latest`（API 请求由 nginx 反向代理到 Gateway，无需注入地址）
+- 种子数据：`hellogo/seed:latest`
 
 验证：
 
@@ -57,8 +58,8 @@ make k8s-install
 1. 创建 `hellogo` 命名空间
 2. 部署 MySQL + Redis（StatefulSet）
 3. 执行 `db-init-job`（创建 `hellogo` 数据库）
-4. 部署 5 个微服务（各自等待 MySQL/Redis 就绪后启动）
-5. 部署 Gateway（NodePort 30080）+ Frontend（NodePort 30090）
+4. 部署 4 个微服务 + Gateway（各自等待 MySQL/Redis 就绪后启动）
+5. 部署 Frontend（NodePort 30090）
 6. 各服务启动时自动建表（AutoMigrate）
 7. 执行 `seed-job`（创建 admin 用户 + 测试数据）
 
@@ -83,6 +84,8 @@ gateway-xxx           1/1     Running   0          45s
 frontend-xxx          1/1     Running   0          45s
 ```
 
+> 默认每个微服务 1 副本。如配置 `replicas: 2`，每个服务会有 2 个 Pod。
+
 ### 5. 验证访问
 
 ```bash
@@ -94,7 +97,7 @@ make k8s-urls
 
 # 测试 API
 curl http://$(minikube ip):30080/api/health
-# {"code":"SUCCESS","data":{"service":"gateway","status":"ok"}}
+# {"code":"OK","statusCode":200,"message":"success","data":{"service":"gateway","status":"ok"},...}
 ```
 
 浏览器打开前端地址即可使用。
@@ -236,6 +239,10 @@ make k8s-logs SVC=user             # 实时查看日志
 make k8s-shell SVC=user            # 进入容器 Shell
 make k8s-restart SVC=user          # 重启某个服务
 make k8s-urls                      # 显示访问地址
+make k8s-deploy SVC=user           # 构建 + 重启单个服务
+make k8s-seed                      # 重新执行种子数据
+make k8s-stop                      # 停止 minikube
+make k8s-forward                   # 重启后恢复端口转发（需要 sudo）
 ```
 
 ---
@@ -250,7 +257,102 @@ minikube stop                      # 停止 minikube
 
 ---
 
-## 六、常见问题排查
+## 六、重启电脑后恢复
+
+重启后 minikube 停止运行，所有 Pod 会随之停止。需要重新启动 minikube，Pod 会自动恢复。
+
+### 方案 A：iptables DNAT（当前使用）
+
+iptables 规则已通过 `netfilter-persistent` 持久化。**如果 minikube IP 没变**，开机后规则自动生效，只需启动 minikube：
+
+```bash
+# 如果 minikube IP 没变（大概率），直接启动即可
+minikube start
+```
+
+如果 minikube IP 变了（`minikube ip` 不再是之前的地址），需要重新执行脚本：
+
+**重启后一键恢复：**
+
+```bash
+sudo ./scripts/k8s-forward.sh
+```
+
+或通过 Makefile：
+
+```bash
+make k8s-forward
+```
+
+脚本会自动：
+1. 启动 minikube（如果未运行）
+2. 获取新的 minikube IP
+3. 清理旧的 iptables 规则
+4. 添加新的 DNAT 转发规则（PREROUTING + OUTPUT + FORWARD + POSTROUTING）
+5. 持久化保存（`netfilter-persistent save`）
+
+查看当前 minikube IP：
+
+```bash
+minikube ip
+```
+
+### 方案 B：`kubectl port-forward`（备选）
+
+无需 sudo，无需配置 iptables，但**每次重启后需要手动执行**。
+
+**手动分步执行：**
+
+```bash
+# 1. 启动 minikube
+minikube start
+
+# 2. 等 Pod 全部就绪
+kubectl wait --for=condition=Ready pod --all -n hellogo --timeout=120s
+
+# 3. 启动端口转发（绑定所有网卡，后台运行）
+nohup kubectl port-forward -n hellogo svc/gateway  --address 0.0.0.0 30080:8000 > /tmp/pf-gateway.log  2>&1 &
+nohup kubectl port-forward -n hellogo svc/frontend --address 0.0.0.0 30090:80    > /tmp/pf-frontend.log 2>&1 &
+```
+
+**验证是否启动成功：**
+
+```bash
+ps aux | grep port-forward | grep -v grep
+# 应看到两个 kubectl port-forward 进程
+```
+
+**停止：**
+
+```bash
+pkill -f "port-forward.*hellogo"
+```
+
+**原理：** `kubectl port-forward` 通过 K8s API 代理，将本机指定端口的流量转发到集群内的 Service。`--address 0.0.0.0` 使所有网卡（包括局域网）都能访问。
+
+**注意事项：**
+- 进程被杀或终端关闭后转发会断开（用 `nohup` 可以避免）
+- 重启电脑后必须重新执行
+- 如果 `port-forward` 报错端口已被占用，先杀掉旧进程：`pkill -f port-forward`
+
+### 两种方案对比
+
+| | iptables DNAT（方案 A） | kubectl port-forward（方案 B） |
+|---|---|---|
+| 需要 sudo | ✅ 需要 | ❌ 不需要 |
+| 重启后自动恢复 | ✅ 规则持久化 | ❌ 需手动执行脚本 |
+| minikube IP 变化 | ❌ 需重新执行 | ✅ 自动适应 |
+| 性能 | 更好（内核态转发） | 略差（用户态代理） |
+| 复杂度 | 多条规则 | 一行命令 |
+| 进程依赖 | 无进程依赖 | 需要进程持续运行 |
+
+**本项目使用方案 A**（iptables），规则持久化后重启自动生效，minikube IP 变化时才需重新执行脚本。方案 B 作为备选，适合临时调试或不想配置 iptables 的场景。
+
+---
+
+## 七、常见问题排查
+
+> 问题 1-4、6、7 已在代码中修复，保留作为历史记录和参考。问题 5（局域网访问）和 8（性能优化）根据实际环境可能仍会遇到。
 
 ### 1. `make k8s-build` 报错：go.mod requires go >= 1.26.3
 
@@ -262,10 +364,7 @@ minikube stop                      # 停止 minikube
 
 **原因：** `deploy/docker/Dockerfile.seed` 中的 Go 基础镜像版本低于 `go.mod` 要求的版本。
 
-**修复：** 确保所有 Dockerfile 的 `FROM golang:` 版本一致：
-```dockerfile
-FROM golang:1.26-alpine AS builder
-```
+**修复（已在代码中修复）：** 所有 Dockerfile 统一使用 `golang:1.26-alpine`。
 
 ---
 
@@ -276,11 +375,17 @@ FROM golang:1.26-alpine AS builder
 Error: INSTALLATION FAILED: namespaces "hellogo" already exists
 ```
 
-**原因：** Helm Chart 的 `namespace.yaml` 模板尝试创建命名空间，与 `--create-namespace` 参数冲突。
+**原因：** Helm Chart 中同时存在 `namespace.yaml` 模板和 `--create-namespace` 参数，导致冲突。或者上次卸载后命名空间处于 `Terminating` 状态尚未完全删除。
 
-**修复：** 删除 `deploy/helm/hellogo/templates/namespace.yaml`，依赖 `--create-namespace` 参数（Helm 标准做法）。
+**修复（已在代码中修复）：** 删除了 `deploy/helm/hellogo/templates/namespace.yaml`，依赖 `--create-namespace` 参数（Helm 标准做法）。
 
-**注意：** 如果命名空间处于 `Terminating` 状态，需要等待删除完成后再执行 install。
+**如果遇到：** 等待命名空间完全删除后再执行 install：
+```bash
+kubectl delete namespace hellogo
+# 等待完成...
+kubectl get ns hellogo  # 确认 not found
+make k8s-install
+```
 
 ---
 
@@ -294,17 +399,7 @@ seed Pod 卡在 `Init:1/4`，日志显示 `wget: error getting response`。
 
 **原因：** 微服务的 Service 只暴露了 gRPC 端口（50001-50004），没有暴露健康检查端口（8080）。seed-job 的 init container 通过 Service DNS 访问 `user-service:8080/healthz`，自然不通。
 
-**修复：** 在每个微服务的 `service.yaml` 中添加 health 端口：
-```yaml
-spec:
-  ports:
-    - name: grpc
-      port: {{ .Values.services.user.grpcPort }}
-      targetPort: grpc
-    - name: health
-      port: {{ .Values.services.user.healthPort }}
-      targetPort: health
-```
+**修复（已在代码中修复）：** 每个微服务的 `service.yaml` 都添加了 health 端口。
 
 **排查命令：**
 ```bash
@@ -326,10 +421,7 @@ write error: can't make directories for new logfile: mkdir logs: permission deni
 
 **原因：** Dockerfile 中容器以 `appuser`（UID 1000）运行，但 `/app/logs` 目录不存在或无写权限。
 
-**修复：** 在 Dockerfile 中创建 logs 目录并赋权：
-```dockerfile
-RUN mkdir -p ./data ./logs && chown appuser:appuser ./data ./logs
-```
+**修复（已在代码中修复）：** `Dockerfile.service` 中创建了 `logs` 目录并赋权给 `appuser`。
 
 ---
 
@@ -397,9 +489,9 @@ cat /proc/sys/net/ipv4/ip_forward   # 应为 1
 
 **原因：** 前端构建时 `VITE_API_URL` 被写死为 minikube IP，外部访问时该地址不可达。
 
-**修复：** 让 nginx 反向代理 API 请求，前端使用相对路径。
+**修复（已在代码中修复）：** 前端使用相对路径，nginx 反向代理 API 请求到 Gateway：
 
-1. **nginx.conf 添加 `/api/` 反向代理：**
+1. **nginx.conf 添加了 `/api/` 反向代理**（`deploy/docker/nginx.conf`）：
 ```nginx
 location /api/ {
     proxy_pass http://gateway:8000/api/;
@@ -409,23 +501,12 @@ location /api/ {
 }
 ```
 
-2. **前端 `apiUrl` 默认改为空（相对路径）：**
+2. **前端 `apiUrl` 默认为空**（`front-end/src/stores/app.ts`）：
 ```ts
 apiUrl: import.meta.env.VITE_API_URL || '',
 ```
 
-3. **Makefile 去掉 `VITE_API_URL` 构建参数：**
-```makefile
-k8s-build-frontend:
-	@eval $$(minikube docker-env) && \
-	docker build -f deploy/docker/Dockerfile.frontend \
-		-t hellogo/frontend:$(or $(TAG),latest) .
-```
-
-4. **重新构建并重启：**
-```bash
-make k8s-build-frontend && make k8s-restart SVC=frontend
-```
+3. **Makefile 不再注入 `VITE_API_URL`**（`Makefile`）
 
 **效果：**
 | | 修改前 | 修改后 |
@@ -445,7 +526,7 @@ Error from server (NotFound): deployments.apps "frontend-service" not found
 
 **原因：** Makefile 固定拼接 `$(SVC)-service`，但 `frontend` 和 `gateway` 的 Deployment 名称没有 `-service` 后缀。
 
-**修复：** 对 `frontend`/`gateway` 做特殊处理：
+**修复（已在代码中修复）：** 对 `frontend`/`gateway` 做了特殊处理（`Makefile` 中的 `k8s-restart`、`k8s-logs`、`k8s-shell`）：
 ```makefile
 k8s-restart:
 ifeq ($(SVC),frontend)
@@ -456,8 +537,6 @@ else
 	kubectl rollout restart deploy/$(SVC)-service -n hellogo
 endif
 ```
-
-同样的修复适用于 `k8s-logs` 和 `k8s-shell`。
 
 ---
 
