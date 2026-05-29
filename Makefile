@@ -209,7 +209,7 @@ k8s-stop:
 
 ## k8s-forward: 重启后恢复端口转发（需要 sudo）
 k8s-forward:
-	sudo ./scripts/k8s-forward.sh
+	./scripts/k8s-forward.sh
 
 ## k8s-status: 查看部署状态（Pods + Services + Helm releases）
 k8s-status:
