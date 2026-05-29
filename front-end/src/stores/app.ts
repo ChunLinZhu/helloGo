@@ -21,7 +21,7 @@ type Actions = {
 export const useAppStore = create<State & Actions>()(
   persist(
     (set) => ({
-      apiUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+      apiUrl: import.meta.env.VITE_API_URL || '',
       token: '',
       sessionId: '',
       refreshToken: '',

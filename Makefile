@@ -176,7 +176,6 @@ k8s-build-one:
 k8s-build-frontend:
 	@eval $$(minikube docker-env) && \
 	docker build \
-		--build-arg VITE_API_URL=http://$$(minikube ip):30080 \
 		-f deploy/docker/Dockerfile.frontend \
 		-t hellogo/frontend:$(or $(TAG),latest) .
 
@@ -217,11 +216,23 @@ k8s-status:
 
 ## k8s-logs: 查看指定服务日志（用法: make k8s-logs SVC=user）
 k8s-logs:
+ifeq ($(SVC),frontend)
+	kubectl logs -f deploy/frontend -n hellogo --tail=100
+else ifeq ($(SVC),gateway)
+	kubectl logs -f deploy/gateway -n hellogo --tail=100
+else
 	kubectl logs -f deploy/$(SVC)-service -n hellogo --tail=100
+endif
 
 ## k8s-shell: 进入指定服务容器（用法: make k8s-shell SVC=user）
 k8s-shell:
+ifeq ($(SVC),frontend)
+	kubectl exec -it deploy/frontend -n hellogo -- sh
+else ifeq ($(SVC),gateway)
+	kubectl exec -it deploy/gateway -n hellogo -- sh
+else
 	kubectl exec -it deploy/$(SVC)-service -n hellogo -- sh
+endif
 
 ## k8s-urls: 显示所有外部访问地址
 k8s-urls:
@@ -232,7 +243,13 @@ k8s-urls:
 
 ## k8s-restart: 重启指定服务（用法: make k8s-restart SVC=user）
 k8s-restart:
+ifeq ($(SVC),frontend)
+	kubectl rollout restart deploy/frontend -n hellogo
+else ifeq ($(SVC),gateway)
+	kubectl rollout restart deploy/gateway -n hellogo
+else
 	kubectl rollout restart deploy/$(SVC)-service -n hellogo
+endif
 
 ## k8s-rollback: 回滚 Helm release 到上一版本
 k8s-rollback:
